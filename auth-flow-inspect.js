@@ -20,17 +20,9 @@ async function inspectAuthFlow() {
     const text = response.data;
 
     const keywords = [
-  "signInWithIdp",
-  "signInWithCredential",
-  "getIdToken"
-];
-      "refreshToken",
-      "signInWithPopup",
-      "signInWithRedirect",
-      "signInWithCredential",
       "signInWithIdp",
-      "getIdToken",
-      "initializeAuth"
+      "signInWithCredential",
+      "getIdToken"
     ];
 
     console.log("\n=== AUTH FLOW CONTEXT ===");

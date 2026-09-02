@@ -1,7 +1,7 @@
 const axios = require("axios");
 
 async function inspectGroic() {
-  console.log("Inspecting Groic Firebase configuration...");
+  console.log("Inspecting Groic Firebase authentication...");
 
   const response = await axios.get("https://groic.in", {
     timeout: 20000,
@@ -22,15 +22,23 @@ async function inspectGroic() {
     return new URL(src, "https://groic.in").href;
   });
 
-  console.log("\n=== FIREBASE CONFIG SEARCH ===");
+  console.log("\n=== FIREBASE AUTH SEARCH ===");
 
-  const patterns = [
-    /apiKey["']?\s*[:=]\s*["']([^"']+)/i,
-    /authDomain["']?\s*[:=]\s*["']([^"']+)/i,
-    /projectId["']?\s*[:=]\s*["']([^"']+)/i,
-    /storageBucket["']?\s*[:=]\s*["']([^"']+)/i,
-    /messagingSenderId["']?\s*[:=]\s*["']([^"']+)/i,
-    /appId["']?\s*[:=]\s*["']([^"']+)/i
+  const keywords = [
+    "firebase",
+    "signInWithPopup",
+    "signInWithRedirect",
+    "GoogleAuthProvider",
+    "getAuth",
+    "initializeAuth",
+    "signInWithCredential",
+    "GoogleAuthProvider.credential",
+    "identitytoolkit",
+    "securetoken",
+    "accounts:signIn",
+    "accounts:lookup",
+    "accounts:signInWithIdp",
+    "refreshToken"
   ];
 
   for (const url of urls) {
@@ -44,22 +52,16 @@ async function inspectGroic() {
 
       const text = result.data;
 
-      if (
-        text.includes("apiKey") ||
-        text.includes("firebaseConfig") ||
-        text.includes("authDomain") ||
-        text.includes("projectId")
-      ) {
-        console.log("\nFOUND FIREBASE CONFIG IN:");
+      const found = keywords.filter(keyword =>
+        text.includes(keyword)
+      );
+
+      if (found.length > 0) {
+        console.log("\nFOUND AUTH REFERENCES IN:");
         console.log(url);
 
-        for (const pattern of patterns) {
-          const match = text.match(pattern);
-
-          if (match) {
-            console.log(match[0]);
-          }
-        }
+        console.log("Keywords found:");
+        console.log(found.join(", "));
       }
 
     } catch (error) {
@@ -67,7 +69,7 @@ async function inspectGroic() {
     }
   }
 
-  console.log("\nInspection completed.");
+  console.log("\nAuthentication inspection completed.");
 }
 
 inspectGroic().catch(error => {

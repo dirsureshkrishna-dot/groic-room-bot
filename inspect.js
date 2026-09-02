@@ -1,7 +1,7 @@
 const axios = require("axios");
 
 async function inspectGroic() {
-  console.log("Inspecting Groic website...");
+  console.log("Inspecting Groic Firebase configuration...");
 
   const response = await axios.get("https://groic.in", {
     timeout: 20000,
@@ -11,8 +11,6 @@ async function inspectGroic() {
   });
 
   const html = response.data;
-
-  console.log("\n=== SCRIPT FILES ===");
 
   const scripts = [
     ...html.matchAll(/<script[^>]+src=["']([^"']+)["']/gi)
@@ -24,37 +22,46 @@ async function inspectGroic() {
     return new URL(src, "https://groic.in").href;
   });
 
-  for (const url of urls) {
-    console.log(url);
-  }
+  console.log("\n=== FIREBASE CONFIG SEARCH ===");
 
-  console.log("\n=== FIREBASE / API KEY REFERENCES ===");
-
-  const keywords = [
-    "firebase",
-    "apiKey",
-    "securetoken",
-    "identitytoolkit"
+  const patterns = [
+    /apiKey["']?\s*[:=]\s*["']([^"']+)/i,
+    /authDomain["']?\s*[:=]\s*["']([^"']+)/i,
+    /projectId["']?\s*[:=]\s*["']([^"']+)/i,
+    /storageBucket["']?\s*[:=]\s*["']([^"']+)/i,
+    /messagingSenderId["']?\s*[:=]\s*["']([^"']+)/i,
+    /appId["']?\s*[:=]\s*["']([^"']+)/i
   ];
 
   for (const url of urls) {
     try {
-      const script = await axios.get(url, {
+      const result = await axios.get(url, {
         timeout: 20000,
         headers: {
           "User-Agent": "Mozilla/5.0"
         }
       });
 
-      const text = script.data;
+      const text = result.data;
 
-      for (const keyword of keywords) {
-        if (text.toLowerCase().includes(keyword.toLowerCase())) {
-          console.log(`FOUND "${keyword}" IN:`);
-          console.log(url);
-          break;
+      if (
+        text.includes("apiKey") ||
+        text.includes("firebaseConfig") ||
+        text.includes("authDomain") ||
+        text.includes("projectId")
+      ) {
+        console.log("\nFOUND FIREBASE CONFIG IN:");
+        console.log(url);
+
+        for (const pattern of patterns) {
+          const match = text.match(pattern);
+
+          if (match) {
+            console.log(match[0]);
+          }
         }
       }
+
     } catch (error) {
       console.log("Could not inspect:", url);
     }

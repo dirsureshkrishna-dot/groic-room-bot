@@ -13,15 +13,26 @@ async function startBot() {
     console.log("SKVIBEZ Groic Bot Starting...");
     console.log("================================");
 
-    // Step 1: Firebase authentication
     await refreshAccessToken();
 
-    // Step 2: Create Groic room
-    const roomUid = await createRoom();
+    let roomUid = process.env.ROOM_UID;
+
+    if (roomUid) {
+      console.log("Using existing YESKING room.");
+      console.log("Room UID:", roomUid);
+    } else {
+      console.log("No ROOM_UID found.");
+      console.log("Creating a new room...");
+
+      roomUid = await createRoom();
+
+      console.log("");
+      console.log("Room created successfully!");
+      console.log("Room Name:", ROOM_NAME);
+      console.log("Room UID:", roomUid);
+    }
 
     console.log("");
-    console.log("Room created successfully!");
-    console.log("Room Name:", ROOM_NAME);
     console.log("Bot Name:", BOT_NAME);
     console.log("Room UID:", roomUid);
 
@@ -30,7 +41,6 @@ async function startBot() {
       `Room Link: https://groic.in/room/${roomUid}?autoJoin=true`
     );
 
-    // Step 3: Connect bot to the room
     connectSocket(roomUid);
 
     console.log("");

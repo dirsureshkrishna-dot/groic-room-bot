@@ -19,9 +19,8 @@ module.exports = {
   ROOM_DESC: "இசையுடன் 🦋 நான்",
 
   ROOM_GENRE: [
-    "COUNTRY",
-    "POPULAR"
-  ],
+  "Popular"
+],
 
   MAX_PARTICIPANTS: 100,
 

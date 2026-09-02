@@ -2,7 +2,8 @@ require("dotenv").config();
 
 const required = [
   "FIREBASE_API_KEY",
-  "REFRESH_TOKEN"
+  "REFRESH_TOKEN",
+  "USER_ID"
 ];
 
 for (const key of required) {
@@ -14,6 +15,7 @@ for (const key of required) {
 module.exports = {
   FIREBASE_API_KEY: process.env.FIREBASE_API_KEY,
   REFRESH_TOKEN: process.env.REFRESH_TOKEN,
+  USER_ID: process.env.USER_ID,
 
   ROOM_NAME: "𝑺𝑲 𝑽𝑰𝑩𝑬𝒁 ⚡️ 𝒀𝑬𝑺𝑲𝑰𝑵𝑮",
   ROOM_DESC: "இசையுடன் 🦋 நான்",

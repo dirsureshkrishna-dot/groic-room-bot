@@ -1,0 +1,14 @@
+{
+  "name": "skvibez-groic-bot",
+  "version": "1.0.0",
+  "description": "SKVIBEZ Groic Room Bot",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js"
+  },
+  "dependencies": {
+    "axios": "^1.11.0",
+    "dotenv": "^17.2.1",
+    "socket.io-client": "^4.8.1"
+  }
+}

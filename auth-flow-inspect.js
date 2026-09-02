@@ -4,7 +4,7 @@ async function inspectAuthFlow() {
   const url =
     "https://groic.in/_next/static/chunks/46be18a3-0ac10e7d693761bc.js";
 
-  console.log("Inspecting Groic Firebase signInWithIdp flow...");
+  console.log("Inspecting Groic Firebase signInWithIdp response flow...");
 
   try {
     const response = await axios.get(url, {
@@ -20,43 +20,29 @@ async function inspectAuthFlow() {
     const text = response.data;
 
     const keywords = [
-      "signInWithIdp",
-      "getIdToken",
-      "securetoken.googleapis.com",
-      "identitytoolkit.googleapis.com",
+      "/v1/accounts:signInWithIdp",
       "accounts:signInWithIdp",
-      "refreshToken"
+      "refreshToken",
+      "idToken",
+      "accessToken"
     ];
 
-    console.log("\n=== FIREBASE AUTH FLOW ===");
+    console.log("\n=== SIGN-IN RESPONSE FLOW ===");
 
     for (const keyword of keywords) {
-      let position = 0;
-      let found = false;
+      const position = text.indexOf(keyword);
 
-      while (true) {
-        position = text.indexOf(keyword, position);
-
-        if (position === -1) break;
-
-        found = true;
-
-        console.log(`\nFOUND: ${keyword}`);
-        console.log(
-          text.slice(
-            Math.max(0, position - 700),
-            Math.min(text.length, position + 1800)
-          )
-        );
-
-        position += keyword.length;
-
-        if (keyword === "refreshToken") break;
-      }
-
-      if (!found) {
+      if (position === -1) {
         console.log(`NOT FOUND: ${keyword}`);
+        continue;
       }
+
+      console.log(`\n===== FOUND: ${keyword} =====`);
+
+      const start = Math.max(0, position - 1500);
+      const end = Math.min(text.length, position + 3000);
+
+      console.log(text.slice(start, end));
     }
 
     console.log("\nInspection completed.");

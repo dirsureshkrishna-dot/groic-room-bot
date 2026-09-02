@@ -4,14 +4,13 @@ async function inspectAuthFlow() {
   const url =
     "https://groic.in/_next/static/chunks/46be18a3-0ac10e7d693761bc.js";
 
-  console.log("Inspecting Groic Firebase signInWithIdp response flow...");
+  console.log("Inspecting Groic Firebase token flow...");
 
   try {
     const response = await axios.get(url, {
       timeout: 30000,
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/147.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0",
         "Accept": "*/*",
         "Referer": "https://groic.in/"
       }
@@ -20,29 +19,41 @@ async function inspectAuthFlow() {
     const text = response.data;
 
     const keywords = [
-      "/v1/accounts:signInWithIdp",
       "accounts:signInWithIdp",
       "refreshToken",
       "idToken",
-      "accessToken"
+      "getIdToken"
     ];
 
-    console.log("\n=== SIGN-IN RESPONSE FLOW ===");
+    console.log("\n=== TOKEN FLOW SEARCH ===");
 
     for (const keyword of keywords) {
-      const position = text.indexOf(keyword);
+      console.log(`\n========== ${keyword} ==========`);
 
-      if (position === -1) {
-        console.log(`NOT FOUND: ${keyword}`);
-        continue;
+      let position = 0;
+      let count = 0;
+
+      while (true) {
+        position = text.indexOf(keyword, position);
+
+        if (position === -1 || count >= 5) {
+          break;
+        }
+
+        count++;
+
+        const start = Math.max(0, position - 300);
+        const end = Math.min(text.length, position + 700);
+
+        console.log(`\n--- occurrence ${count} ---`);
+        console.log(text.slice(start, end));
+
+        position += keyword.length;
       }
 
-      console.log(`\n===== FOUND: ${keyword} =====`);
-
-      const start = Math.max(0, position - 1500);
-      const end = Math.min(text.length, position + 3000);
-
-      console.log(text.slice(start, end));
+      if (count === 0) {
+        console.log("NOT FOUND");
+      }
     }
 
     console.log("\nInspection completed.");

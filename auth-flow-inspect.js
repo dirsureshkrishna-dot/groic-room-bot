@@ -20,6 +20,10 @@ async function inspectAuthFlow() {
     const text = response.data;
 
     const keywords = [
+  "signInWithIdp",
+  "signInWithCredential",
+  "getIdToken"
+];
       "refreshToken",
       "signInWithPopup",
       "signInWithRedirect",

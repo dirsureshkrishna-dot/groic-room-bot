@@ -86,12 +86,12 @@ function connect() {
   });
 
   socket.on("connect_error", (error) => {
-    console.error(
-      "Socket connection error:",
-      error.message
-    );
-  });
-
+  console.error("Socket connection error:");
+  console.error("Message:", error.message);
+  console.error("Description:", error.description);
+  console.error("Context:", error.context);
+  console.error("Type:", error.type);
+});
   socket.on("reconnect", (attempt) => {
     console.log(
       "Socket reconnected. Attempt:",

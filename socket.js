@@ -4,13 +4,32 @@ const { getToken } = require("./auth");
 const SOCKET_URL = "https://socket-v2.groic.in";
 
 let socket = null;
+let currentRoomUid = null;
+let reconnectTimer = null;
 
 function connectSocket(roomUid) {
+  currentRoomUid = roomUid;
+
+  connect();
+
+  return socket;
+}
+
+function connect() {
   const token = getToken();
 
   if (!token) {
     throw new Error("Authentication token is missing.");
   }
+
+  if (socket) {
+    try {
+      socket.removeAllListeners();
+      socket.disconnect();
+    } catch (e) {}
+  }
+
+  console.log("Connecting to Groic Socket...");
 
   socket = io(SOCKET_URL, {
     transports: ["websocket", "polling"],
@@ -30,6 +49,8 @@ function connectSocket(roomUid) {
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 3000,
+    reconnectionDelayMax: 10000,
+
     timeout: 30000,
 
     pingTimeout: 60000,
@@ -40,24 +61,41 @@ function connectSocket(roomUid) {
     console.log("Groic Socket connected.");
     console.log("Socket ID:", socket.id);
 
-    socket.emit("joinRoom", {
-      roomUid: roomUid,
-      name: "SKVIBEZ",
-      imageUrl: "",
-      isBot: false
-    });
+    if (currentRoomUid) {
+      socket.emit("joinRoom", {
+        roomUid: currentRoomUid,
+        name: "SKVIBEZ",
+        imageUrl: "",
+        isBot: false
+      });
 
-    console.log("Join room request sent.");
+      console.log("Join room request sent.");
+    }
   });
 
   socket.on("disconnect", (reason) => {
     console.log("Socket disconnected:", reason);
+
+    if (reason === "io server disconnect") {
+      console.log(
+        "Groic server disconnected the bot. Reconnecting..."
+      );
+
+      scheduleReconnect();
+    }
   });
 
   socket.on("connect_error", (error) => {
     console.error(
       "Socket connection error:",
       error.message
+    );
+  });
+
+  socket.on("reconnect", (attempt) => {
+    console.log(
+      "Socket reconnected. Attempt:",
+      attempt
     );
   });
 
@@ -69,6 +107,29 @@ function connectSocket(roomUid) {
   });
 
   return socket;
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) {
+    return;
+  }
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+
+    console.log("Attempting socket reconnect...");
+
+    try {
+      connect();
+    } catch (error) {
+      console.error(
+        "Reconnect failed:",
+        error.message
+      );
+
+      scheduleReconnect();
+    }
+  }, 5000);
 }
 
 function getSocket() {

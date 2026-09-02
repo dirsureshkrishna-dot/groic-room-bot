@@ -32,7 +32,7 @@ function connect() {
   console.log("Connecting to Groic Socket...");
 
   socket = io(SOCKET_URL, {
-    transports: ["websocket", "polling"],
+    transports: ["polling"],
 
     auth: {
       Authorization: token

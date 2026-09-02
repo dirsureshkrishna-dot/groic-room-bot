@@ -3,8 +3,9 @@
   "version": "1.0.0",
   "description": "SKVIBEZ Groic Room Bot",
   "main": "main.js",
-  "scripts": {
-    "start": "node auth-flow-inspect.js"
+"scripts": {
+  "start": "node main.js"
+}
   },
   "engines": {
     "node": ">=20"

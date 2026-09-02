@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "description": "SKVIBEZ Groic Room Bot",
   "main": "main.js",
-"scripts": {
-  "start": "node auth-flow-inspect.js"
-}
+  "scripts": {
+    "start": "node auth-flow-inspect.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "axios": "^1.11.0",
     "dotenv": "^17.2.1",

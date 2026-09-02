@@ -7,7 +7,8 @@ const {
   ROOM_DESC,
   ROOM_GENRE,
   MAX_PARTICIPANTS,
-  OWNER_USERNAME
+  OWNER_USERNAME,
+  USER_ID
 } = require("./config/env");
 
 const BASE_URL = "https://api.groic.in/api";
@@ -34,10 +35,11 @@ function getHeaders() {
 
 async function createRoom() {
   const payload = {
-    username: OWNER_USERNAME,
-    roomName: ROOM_NAME,
-    roomDesc: ROOM_DESC,
-    roomGenre: ROOM_GENRE,
+  username: OWNER_USERNAME,
+  roomOwner: USER_ID,
+  roomName: ROOM_NAME,
+  roomDesc: ROOM_DESC,
+  roomGenre: ROOM_GENRE,
     roomCountry: "IN",
     maxParticipants: MAX_PARTICIPANTS,
     isPublicRoom: true

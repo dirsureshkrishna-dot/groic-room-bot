@@ -105,7 +105,16 @@ function connect() {
       JSON.stringify(data)
     );
   });
+socket.onAny((event, ...args) => {
+  console.log("Socket Event:", event);
 
+  if (args.length > 0) {
+    console.log(
+      "Socket Data:",
+      JSON.stringify(args)
+    );
+  }
+});
   return socket;
 }
 

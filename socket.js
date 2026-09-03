@@ -1,8 +1,14 @@
 const { io } = require("socket.io-client");
-const { getToken } = require("./auth");
+
+const {
+  getToken,
+  onTokenRefresh
+} = require("./auth");
+
 const { searchYouTube } = require("./music");
 
-const SOCKET_URL = "https://socket-v2.groic.in";
+const SOCKET_URL =
+  "https://socket-v2.groic.in";
 
 let socket = null;
 let currentRoomUid = null;
@@ -19,12 +25,59 @@ let activeParticipants = new Set();
 const welcomeCooldown = new Map();
 
 /*
- * Connect SKVIBEZ to the room
+ * ========================================
+ * TOKEN REFRESH HANDLER
+ * ========================================
+ *
+ * When Firebase gives us a new token,
+ * reconnect the Groic socket using it.
+ */
+onTokenRefresh(async (newToken) => {
+  console.log(
+    "New SKVIBEZ token received."
+  );
+
+  if (!newToken) {
+    console.log(
+      "New token is empty. Socket will not reconnect."
+    );
+
+    return;
+  }
+
+  if (!currentRoomUid) {
+    return;
+  }
+
+  console.log(
+    "Reconnecting Groic Socket with new token..."
+  );
+
+  try {
+    connect();
+  } catch (error) {
+    console.error(
+      "Token refresh socket reconnect failed:",
+      error.message
+    );
+  }
+});
+
+/*
+ * ========================================
+ * CONNECT SKVIBEZ TO ROOM
+ * ========================================
  */
 function connectSocket(roomUid) {
   currentRoomUid = roomUid;
 
-  activeParticipants = new Set();
+  /*
+   * First connection starts with no
+   * known participants.
+   */
+  activeParticipants =
+    new Set();
+
   welcomeCooldown.clear();
 
   connect();
@@ -33,7 +86,9 @@ function connectSocket(roomUid) {
 }
 
 /*
- * Create socket connection
+ * ========================================
+ * CREATE SOCKET CONNECTION
+ * ========================================
  */
 function connect() {
   const token = getToken();
@@ -45,7 +100,13 @@ function connect() {
   }
 
   /*
-   * Close old socket
+   * Close old socket before creating
+   * a new one.
+   *
+   * IMPORTANT:
+   * We do NOT clear activeParticipants here.
+   * This prevents duplicate Welcome messages
+   * when reconnecting after token refresh.
    */
   if (socket) {
     try {
@@ -93,7 +154,10 @@ function connect() {
     participantName,
     username
   ) {
-    if (!participantName || !username) {
+    if (
+      !participantName ||
+      !username
+    ) {
       return;
     }
 
@@ -101,17 +165,18 @@ function connect() {
       username.toLowerCase();
 
     /*
-     * Never Welcome SKVIBEZ itself
+     * Never Welcome SKVIBEZ itself.
      */
     if (
-      normalizedUsername === "skvibez"
+      normalizedUsername ===
+      "skvibez"
     ) {
       return;
     }
 
     /*
      * Prevent duplicate Welcome messages
-     * caused by repeated presenceUpdate events.
+     * caused by repeated presence updates.
      */
     const now = Date.now();
 
@@ -120,10 +185,10 @@ function connect() {
         normalizedUsername
       ) || 0;
 
-    /*
-     * Ignore duplicate event within 15 seconds.
-     */
-    if (now - lastWelcome < 15000) {
+    if (
+      now - lastWelcome <
+      15000
+    ) {
       console.log(
         "Welcome skipped (duplicate):",
         participantName
@@ -146,12 +211,12 @@ function connect() {
       welcomeMessage
     );
 
-    /*
-     * Groic outgoing chat event
-     */
-    socket.emit("sendChat", {
-      message: welcomeMessage
-    });
+    socket.emit(
+      "sendChat",
+      {
+        message: welcomeMessage
+      }
+    );
 
     console.log(
       "Welcome message sent."
@@ -163,59 +228,68 @@ function connect() {
    * SOCKET CONNECTED
    * ========================================
    */
-  socket.on("connect", () => {
-    console.log(
-      "Groic Socket connected."
-    );
-
-    console.log(
-      "Socket ID:",
-      socket.id
-    );
-
-    /*
-     * New connection.
-     */
-    activeParticipants =
-      new Set();
-
-    if (currentRoomUid) {
-      socket.emit("joinRoom", {
-        roomUid: currentRoomUid,
-        name: "SKVIBEZ",
-        imageUrl:
-          process.env.BOT_IMAGE_URL || "",
-        isBot: false
-      });
+  socket.on(
+    "connect",
+    () => {
+      console.log(
+        "Groic Socket connected."
+      );
 
       console.log(
-        "Join room request sent."
+        "Socket ID:",
+        socket.id
       );
+
+      if (currentRoomUid) {
+        socket.emit(
+          "joinRoom",
+          {
+            roomUid:
+              currentRoomUid,
+
+            name:
+              "SKVIBEZ",
+
+            imageUrl:
+              process.env.BOT_IMAGE_URL ||
+              "",
+
+            isBot: false
+          }
+        );
+
+        console.log(
+          "Join room request sent."
+        );
+      }
     }
-  });
+  );
 
   /*
    * ========================================
    * DISCONNECTED
    * ========================================
    */
-  socket.on("disconnect", (reason) => {
-    console.log(
-      "Socket disconnected:",
-      reason
-    );
-
-    if (
-      reason ===
-      "io server disconnect"
-    ) {
+  socket.on(
+    "disconnect",
+    (reason) => {
       console.log(
-        "Groic server disconnected the bot."
+        "Socket disconnected:",
+        reason
       );
 
-      scheduleReconnect();
+      if (
+        reason ===
+        "io server disconnect"
+      ) {
+        console.log(
+          "Groic server disconnected the bot."
+        );
+
+        scheduleReconnect();
+      }
     }
-  });
+  );
 
   /*
    * ========================================
@@ -284,17 +358,21 @@ function connect() {
         data?.[0]?.activeUsers ||
         [];
 
-      if (!Array.isArray(users)) {
+      if (
+        !Array.isArray(users)
+      ) {
         return;
       }
 
       /*
-       * Participants in the current update
+       * Participants in this update.
        */
       const currentParticipants =
         new Set();
 
-      for (const user of users) {
+      for (
+        const user of users
+      ) {
         const username =
           user?.username || "";
 
@@ -310,7 +388,7 @@ function connect() {
           username.toLowerCase();
 
         /*
-         * SKVIBEZ itself
+         * SKVIBEZ itself.
          */
         if (
           normalizedUsername ===
@@ -324,14 +402,17 @@ function connect() {
         }
 
         /*
-         * Add participant
+         * Add participant.
          */
         currentParticipants.add(
           normalizedUsername
         );
 
         /*
-         * New participant
+         * New participant.
+         *
+         * If they were previously absent,
+         * Welcome will be sent.
          */
         if (
           !activeParticipants.has(
@@ -351,10 +432,13 @@ function connect() {
       }
 
       /*
-       * Save current room participants
+       * Save current participants.
        *
-       * If someone leaves, they are removed.
-       * If they return later, Welcome will be sent.
+       * If someone leaves, they disappear
+       * from this Set.
+       *
+       * If they return later, they are treated
+       * as a new participant and get Welcome.
        */
       activeParticipants =
         currentParticipants;
@@ -428,11 +512,8 @@ function connect() {
           );
 
           /*
-           * Groic handles the actual
+           * Groic handles actual
            * music playback.
-           *
-           * We only perform YouTube search
-           * here for the bot integration.
            */
           if (
             results &&
@@ -468,7 +549,9 @@ function connect() {
         event
       );
 
-      if (args.length > 0) {
+      if (
+        args.length > 0
+      ) {
         console.log(
           "Socket Data:",
           JSON.stringify(args)
@@ -512,7 +595,9 @@ function scheduleReconnect() {
 }
 
 /*
- * Get current socket
+ * ========================================
+ * GET SOCKET
+ * ========================================
  */
 function getSocket() {
   return socket;

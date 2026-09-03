@@ -105,6 +105,12 @@ function connect() {
       JSON.stringify(data)
     );
   });
+  socket.on("chat", (data) => {
+  console.log(
+    "Chat message:",
+    JSON.stringify(data)
+  );
+});
 socket.onAny((event, ...args) => {
   console.log("Socket Event:", event);
 

@@ -8,11 +8,22 @@ let socket = null;
 let currentRoomUid = null;
 let reconnectTimer = null;
 
-let knownParticipants = new Set();
+/*
+ * Current participants in the room
+ *
+ * ஒருவர் room-ல் இருக்கும் வரை இங்கே இருப்பார்.
+ * வெளியே சென்றால் அடுத்த presenceUpdate-ல் Set-ல் இருந்து நீக்கப்படுவார்.
+ * மீண்டும் வந்தால் புதிய participant ஆக கருதப்பட்டு Welcome வரும்.
+ */
+let activeParticipants = new Set();
 
 function connectSocket(roomUid) {
   currentRoomUid = roomUid;
-  knownParticipants = new Set();
+
+  /*
+   * New connection என்றால் participant tracking-ஐ reset செய்கிறோம்.
+   */
+  activeParticipants = new Set();
 
   connect();
 
@@ -61,9 +72,18 @@ function connect() {
     pingInterval: 25000
   });
 
+  /*
+   * Socket connected
+   */
   socket.on("connect", () => {
     console.log("Groic Socket connected.");
     console.log("Socket ID:", socket.id);
+
+    /*
+     * New socket connection.
+     * Current participant list will be rebuilt from presenceUpdate.
+     */
+    activeParticipants = new Set();
 
     if (currentRoomUid) {
       socket.emit("joinRoom", {
@@ -77,6 +97,9 @@ function connect() {
     }
   });
 
+  /*
+   * Socket disconnected
+   */
   socket.on("disconnect", (reason) => {
     console.log("Socket disconnected:", reason);
 
@@ -89,6 +112,9 @@ function connect() {
     }
   });
 
+  /*
+   * Connection error
+   */
   socket.on("connect_error", (error) => {
     console.error("Socket connection error:");
     console.error("Message:", error.message);
@@ -97,6 +123,9 @@ function connect() {
     console.error("Type:", error.type);
   });
 
+  /*
+   * Reconnected
+   */
   socket.on("reconnect", (attempt) => {
     console.log(
       "Socket reconnected. Attempt:",
@@ -122,6 +151,11 @@ function connect() {
       return;
     }
 
+    /*
+     * Participants currently present in this update.
+     */
+    const currentParticipants = new Set();
+
     for (const user of users) {
       const username = user?.username || "";
       const participantName =
@@ -131,20 +165,32 @@ function connect() {
         continue;
       }
 
+      const normalizedUsername =
+        username.toLowerCase();
+
       /*
-       * Ignore SKVIBEZ itself
+       * Never welcome SKVIBEZ itself.
        */
-      if (username.toLowerCase() === "skvibez") {
-        knownParticipants.add(username);
+      if (normalizedUsername === "skvibez") {
+        currentParticipants.add(
+          normalizedUsername
+        );
+
         continue;
       }
 
       /*
-       * Detect new participant
+       * Keep track of everyone currently inside.
        */
-      if (!knownParticipants.has(username)) {
-        knownParticipants.add(username);
+      currentParticipants.add(
+        normalizedUsername
+      );
 
+      /*
+       * If this username was NOT in the previous
+       * participant list, they have newly joined.
+       */
+      if (!activeParticipants.has(normalizedUsername)) {
         console.log(
           "New participant:",
           participantName
@@ -153,6 +199,20 @@ function connect() {
         sendWelcomeMessage(participantName);
       }
     }
+
+    /*
+     * IMPORTANT:
+     *
+     * Replace the old list with the current list.
+     *
+     * Therefore:
+     *
+     * Malar enters  -> Welcome
+     * Malar stays   -> No duplicate
+     * Malar leaves  -> Removed from Set
+     * Malar enters  -> Welcome again
+     */
+    activeParticipants = currentParticipants;
   });
 
   /*
@@ -206,7 +266,6 @@ function connect() {
             2
           )
         );
-
       } catch (error) {
         console.error(
           "YouTube search failed:",
@@ -234,12 +293,19 @@ function connect() {
       welcomeMessage
     );
 
+    /*
+     * Current outgoing chat payload.
+     *
+     * We are keeping this unchanged for now.
+     * The next step will be testing whether Groic
+     * actually accepts this payload.
+     */
     socket.emit("chat", [
-  {
-    roomUid: currentRoomUid,
-    message: welcomeMessage
-  }
-]);
+      {
+        roomUid: currentRoomUid,
+        message: welcomeMessage
+      }
+    ]);
 
     console.log(
       "Welcome message emit completed."
@@ -266,6 +332,9 @@ function connect() {
   return socket;
 }
 
+/*
+ * Reconnect
+ */
 function scheduleReconnect() {
   if (reconnectTimer) {
     return;

@@ -12,29 +12,21 @@ const SOCKET_URL =
 
 let socket = null;
 let currentRoomUid = null;
+
 let reconnectTimer = null;
 let keepAliveInterval = null;
+let watchdogInterval = null;
 
-/*
- * ========================================
- * SOCKET DIAGNOSTICS
- * ========================================
- *
- * Never log tokens or secrets.
- */
 let socketConnectionCount = 0;
 let currentSocketInstanceId = null;
 
+let lastConnectedAt = null;
+let lastDisconnectAt = null;
+let lastPresenceAt = null;
+let lastSyncAt = null;
 
-/*
- * Users currently known to be inside the room.
- */
 let activeParticipants = new Set();
 
-
-/*
- * Prevent duplicate Welcome messages.
- */
 const welcomeCooldown = new Map();
 
 
@@ -51,8 +43,8 @@ function connectSocket(roomUid) {
   }
 
   /*
-   * Only reset participant tracking when
-   * connecting to a different room.
+   * Reset participant tracking only
+   * when changing rooms.
    */
   if (currentRoomUid !== roomUid) {
     activeParticipants = new Set();
@@ -61,9 +53,9 @@ function connectSocket(roomUid) {
 
   currentRoomUid = roomUid;
 
+
   /*
-   * Never create another socket if the
-   * existing socket is already connected.
+   * Existing socket is already connected.
    */
   if (
     socket &&
@@ -79,13 +71,43 @@ function connectSocket(roomUid) {
     );
 
     startKeepAlive();
+    startConnectionWatchdog();
 
     return socket;
   }
 
+
+  /*
+   * Existing socket is currently
+   * reconnecting.
+   */
+  if (
+    socket &&
+    socket.active
+  ) {
+    console.log(
+      "Existing Socket.IO connection is reconnecting."
+    );
+
+    console.log(
+      "Socket instance:",
+      currentSocketInstanceId
+    );
+
+    startKeepAlive();
+    startConnectionWatchdog();
+
+    return socket;
+  }
+
+
+  /*
+   * First connection.
+   */
   connect();
 
   startKeepAlive();
+  startConnectionWatchdog();
 
   return socket;
 }
@@ -93,7 +115,7 @@ function connectSocket(roomUid) {
 
 /*
  * ========================================
- * CREATE SOCKET CONNECTION
+ * CREATE FIRST SOCKET
  * ========================================
  */
 function connect() {
@@ -105,9 +127,10 @@ function connect() {
     );
   }
 
+
   /*
-   * If an existing socket is already
-   * connected, never replace it.
+   * NEVER create another socket if the
+   * existing one is connected.
    */
   if (
     socket &&
@@ -117,9 +140,20 @@ function connect() {
       "Existing Groic Socket is already connected."
     );
 
+    return socket;
+  }
+
+
+  /*
+   * If an existing socket is active,
+   * let Socket.IO reconnect it.
+   */
+  if (
+    socket &&
+    socket.active
+  ) {
     console.log(
-      "Active Socket instance:",
-      currentSocketInstanceId
+      "Existing Socket.IO socket is already active."
     );
 
     return socket;
@@ -127,13 +161,13 @@ function connect() {
 
 
   /*
-   * Clean up an old disconnected socket
-   * before creating a new one.
+   * Only clean up an old socket when
+   * it is completely inactive.
    */
   if (socket) {
     try {
       console.log(
-        "Cleaning up old disconnected socket:",
+        "Cleaning up inactive socket:",
         currentSocketInstanceId
       );
 
@@ -142,7 +176,7 @@ function connect() {
 
     } catch (error) {
       console.log(
-        "Old socket cleanup:",
+        "Inactive socket cleanup:",
         error.message
       );
     }
@@ -152,7 +186,7 @@ function connect() {
 
 
   /*
-   * Create a new diagnostic instance ID.
+   * Create a diagnostic instance ID.
    */
   socketConnectionCount++;
 
@@ -191,7 +225,7 @@ function connect() {
     },
 
     /*
-     * Automatic reconnect.
+     * Socket.IO automatic reconnect.
      */
     reconnection: true,
     reconnectionAttempts: Infinity,
@@ -201,7 +235,7 @@ function connect() {
     timeout: 30000,
 
     /*
-     * Socket.IO heartbeat.
+     * Engine.IO heartbeat configuration.
      */
     pingTimeout: 60000,
     pingInterval: 25000
@@ -210,7 +244,7 @@ function connect() {
 
   /*
    * ========================================
-   * SOCKET.IO MANAGER DIAGNOSTICS
+   * MANAGER RECONNECT DIAGNOSTICS
    * ========================================
    */
 
@@ -279,13 +313,16 @@ function connect() {
 
   /*
    * ========================================
-   * SOCKET CONNECTED
+   * CONNECTED
    * ========================================
    */
 
   socket.on(
     "connect",
     () => {
+      lastConnectedAt =
+        Date.now();
+
       console.log(
         "Groic Socket connected."
       );
@@ -306,10 +343,6 @@ function connect() {
       );
 
 
-      /*
-       * Attach Engine diagnostics for
-       * this socket connection.
-       */
       attachEngineDiagnostics(
         socket,
         currentSocketInstanceId
@@ -326,18 +359,26 @@ function connect() {
 
 
       /*
-       * Join the current YESKING room.
+       * Rejoin only after an actual
+       * connection/reconnection.
        */
       socket.emit(
         "joinRoom",
         {
-          roomUid: currentRoomUid,
-          name: "SKVIBEZ",
+          roomUid:
+            currentRoomUid,
+
+          name:
+            "SKVIBEZ",
+
           imageUrl:
             process.env.BOT_IMAGE_URL || "",
-          isBot: false
+
+          isBot:
+            false
         }
       );
+
 
       console.log(
         "Join room request sent."
@@ -365,13 +406,16 @@ function connect() {
   socket.on(
     "disconnect",
     (reason) => {
+      lastDisconnectAt =
+        Date.now();
+
       console.log(
         "Socket disconnected:",
         reason
       );
 
       console.log(
-        "Socket instance at disconnect:",
+        "Socket instance:",
         currentSocketInstanceId
       );
 
@@ -390,17 +434,15 @@ function connect() {
         socket.id
       );
 
-      console.log(
-        "Total Socket instances created:",
-        socketConnectionCount
-      );
-
 
       /*
-       * Transport close.
+       * IMPORTANT:
        *
-       * Socket.IO should automatically
-       * reconnect.
+       * For transport close, DO NOT create
+       * another socket.
+       *
+       * Socket.IO automatic reconnect
+       * should reuse the same socket.
        */
       if (
         reason ===
@@ -411,7 +453,11 @@ function connect() {
         );
 
         console.log(
-          "Socket.IO automatic reconnect will handle recovery."
+          "Keeping the same Socket.IO instance."
+        );
+
+        console.log(
+          "Automatic reconnect will handle recovery."
         );
 
         return;
@@ -419,7 +465,14 @@ function connect() {
 
 
       /*
-       * Server explicitly disconnected us.
+       * Server explicitly disconnected
+       * the Socket.IO socket.
+       *
+       * In this case Socket.IO sets
+       * socket.active = false.
+       *
+       * We recover using the SAME socket
+       * instead of creating a new io().
        */
       if (
         reason ===
@@ -429,7 +482,11 @@ function connect() {
           "Groic server disconnected SKVIBEZ."
         );
 
-        scheduleReconnect();
+        console.log(
+          "Attempting recovery using the same Socket.IO socket."
+        );
+
+        scheduleSameSocketReconnect();
 
         return;
       }
@@ -474,28 +531,14 @@ function connect() {
         error.type
       );
 
-      console.error(
-        "Socket instance:",
-        currentSocketInstanceId
-      );
-
-
+      /*
+       * Never print authentication
+       * tokens.
+       */
       if (error.data) {
         console.error(
           "Error data:",
-          JSON.stringify(
-            error.data
-          )
-        );
-      }
-
-
-      if (error.response) {
-        console.error(
-          "Error response:",
-          JSON.stringify(
-            error.response
-          )
+          JSON.stringify(error.data)
         );
       }
     }
@@ -511,19 +554,25 @@ function connect() {
   socket.on(
     "presenceUpdate",
     (data) => {
+      lastPresenceAt =
+        Date.now();
+
       console.log(
         "Presence update:",
         JSON.stringify(data)
       );
+
 
       const users =
         data?.activeUsers ||
         data?.[0]?.activeUsers ||
         [];
 
+
       if (!Array.isArray(users)) {
         return;
       }
+
 
       const currentParticipants =
         new Set();
@@ -536,6 +585,7 @@ function connect() {
         const participantName =
           user?.name ||
           username;
+
 
         if (!username) {
           continue;
@@ -582,9 +632,6 @@ function connect() {
       }
 
 
-      /*
-       * Save current presence.
-       */
       activeParticipants =
         currentParticipants;
     }
@@ -689,7 +736,7 @@ function connect() {
 
   /*
    * ========================================
-   * LOG SOCKET EVENTS
+   * SOCKET EVENT LOGGING
    * ========================================
    */
 
@@ -719,10 +766,8 @@ function connect() {
  * ========================================
  * ENGINE DIAGNOSTICS
  * ========================================
- *
- * Attached separately to each newly
- * created Socket.IO engine.
  */
+
 function attachEngineDiagnostics(
   socketInstance,
   instanceId
@@ -744,9 +789,25 @@ function attachEngineDiagnostics(
     socketInstance.io.engine;
 
 
+  /*
+   * Prevent duplicate listeners on the
+   * same Engine instance.
+   */
+  if (
+    engine.__skvibezDiagnosticsAttached
+  ) {
+    return;
+  }
+
+
+  engine.__skvibezDiagnosticsAttached =
+    true;
+
+
   console.log(
     "Groic Engine diagnostics enabled."
   );
+
 
   console.log(
     "Engine Socket instance:",
@@ -821,10 +882,8 @@ function sendWelcomeMessage(
   }
 
 
-  /*
-   * Duplicate protection.
-   */
-  const now = Date.now();
+  const now =
+    Date.now();
 
 
   const lastWelcome =
@@ -890,11 +949,8 @@ function sendWelcomeMessage(
  *
  * IMPORTANT:
  *
- * Do NOT call connect() here.
- *
- * Update authentication without
- * intentionally disconnecting the
- * current Socket.
+ * Never intentionally disconnect the
+ * current socket during token refresh.
  */
 onTokenRefresh(
   async (newToken) => {
@@ -922,7 +978,8 @@ onTokenRefresh(
 
 
     /*
-     * Update Socket.IO authentication.
+     * Update Socket.IO authentication
+     * for future reconnection.
      */
     socket.auth = {
       Authorization:
@@ -952,7 +1009,7 @@ onTokenRefresh(
 
 
     console.log(
-      "Groic Socket authentication updated with new token."
+      "Groic Socket authentication updated."
     );
 
 
@@ -986,6 +1043,10 @@ function startKeepAlive() {
           socket.connected &&
           currentRoomUid
         ) {
+          lastSyncAt =
+            Date.now();
+
+
           console.log(
             "Sending Groic room sync..."
           );
@@ -1012,16 +1073,92 @@ function startKeepAlive() {
 
 /*
  * ========================================
- * RECONNECT
+ * CONNECTION WATCHDOG
  * ========================================
+ *
+ * This watchdog DOES NOT create a new
+ * socket while Socket.IO is already
+ * reconnecting.
  */
+function startConnectionWatchdog() {
+  if (watchdogInterval) {
+    clearInterval(
+      watchdogInterval
+    );
+  }
 
-function scheduleReconnect() {
-  if (reconnectTimer) {
-    console.log(
-      "Reconnect already scheduled."
+
+  watchdogInterval =
+    setInterval(
+      () => {
+        if (!socket) {
+          console.log(
+            "[Watchdog] Socket object missing."
+          );
+
+          return;
+        }
+
+
+        if (socket.connected) {
+          console.log(
+            "[Watchdog] Socket is connected."
+          );
+
+          return;
+        }
+
+
+        /*
+         * Socket.IO is reconnecting.
+         */
+        if (socket.active) {
+          console.log(
+            "[Watchdog] Socket.IO is reconnecting..."
+          );
+
+          return;
+        }
+
+
+        /*
+         * Socket is disconnected and
+         * inactive.
+         *
+         * Reuse the SAME Socket.IO socket.
+         */
+        console.log(
+          "[Watchdog] Socket inactive. Recovering same socket..."
+        );
+
+
+        scheduleSameSocketReconnect();
+
+      },
+      30000
     );
 
+
+  console.log(
+    "SKVIBEZ connection watchdog enabled."
+  );
+}
+
+
+/*
+ * ========================================
+ * SAME SOCKET RECONNECT
+ * ========================================
+ *
+ * IMPORTANT:
+ *
+ * Do NOT call io() here.
+ * Do NOT create another Socket instance.
+ *
+ * Reuse the existing Socket.IO socket.
+ */
+function scheduleSameSocketReconnect() {
+  if (reconnectTimer) {
     return;
   }
 
@@ -1033,56 +1170,99 @@ function scheduleReconnect() {
           null;
 
 
+        if (!socket) {
+          console.log(
+            "No existing socket available for recovery."
+          );
+
+          try {
+            connect();
+          } catch (error) {
+            console.error(
+              "New socket recovery failed:",
+              error.message
+            );
+
+            scheduleSameSocketReconnect();
+          }
+
+          return;
+        }
+
+
+        if (socket.connected) {
+          console.log(
+            "Socket already connected. Recovery cancelled."
+          );
+
+          return;
+        }
+
+
+        if (socket.active) {
+          console.log(
+            "Socket.IO is already reconnecting."
+          );
+
+          return;
+        }
+
+
         console.log(
-          "Attempting socket recovery..."
+          "Recovering existing Socket.IO socket..."
         );
 
 
         try {
           /*
-           * Already connected.
+           * Reuse the SAME Socket.IO socket.
            */
-          if (
-            socket &&
-            socket.connected
-          ) {
-            console.log(
-              "Socket is already connected."
-            );
+          socket.connect();
 
-            return;
-          }
-
-
-          /*
-           * Socket.IO is already actively
-           * reconnecting.
-           */
-          if (
-            socket &&
-            socket.active
-          ) {
-            console.log(
-              "Socket.IO is already reconnecting."
-            );
-
-            return;
-          }
-
-
-          /*
-           * Create a new socket only when
-           * the existing one is not active.
-           */
-          connect();
+          console.log(
+            "Same Socket.IO socket reconnect requested."
+          );
 
         } catch (error) {
           console.error(
-            "Socket recovery failed:",
+            "Same-socket recovery failed:",
             error.message
           );
 
-          scheduleReconnect();
+          /*
+           * Only if the existing socket itself
+           * cannot recover do we create a fresh
+           * socket as a last resort.
+           */
+          try {
+            console.log(
+              "Falling back to new Socket instance."
+            );
+
+            socket.removeAllListeners();
+            socket.disconnect();
+
+          } catch (cleanupError) {
+            console.log(
+              "Socket cleanup:",
+              cleanupError.message
+            );
+          }
+
+
+          socket = null;
+
+
+          try {
+            connect();
+          } catch (connectError) {
+            console.error(
+              "Fallback socket creation failed:",
+              connectError.message
+            );
+
+            scheduleSameSocketReconnect();
+          }
         }
 
       },

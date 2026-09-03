@@ -1,6 +1,6 @@
 const { io } = require("socket.io-client");
 const { getToken } = require("./auth");
-
+const { searchYouTube } = require("./music");
 const SOCKET_URL = "https://socket-v2.groic.in";
 
 let socket = null;
@@ -105,53 +105,42 @@ function connect() {
       JSON.stringify(data)
     );
   });
-  socket.on("chat", (data) => {
+  socket.on("chat", async (data) => {
   console.log(
     "Chat message:",
     JSON.stringify(data)
   );
-});
-socket.onAny((event, ...args) => {
-  console.log("Socket Event:", event);
 
-  if (args.length > 0) {
-    console.log(
-      "Socket Data:",
-      JSON.stringify(args)
-    );
-  }
-});
-  return socket;
-}
+  const message =
+    data?.message ||
+    data?.[0]?.message ||
+    "";
 
-function scheduleReconnect() {
-  if (reconnectTimer) {
+  if (!message.toLowerCase().startsWith("!play ")) {
     return;
   }
 
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
+  const query = message.slice(6).trim();
 
-    console.log("Attempting socket reconnect...");
+  if (!query) {
+    return;
+  }
 
-    try {
-      connect();
-    } catch (error) {
-      console.error(
-        "Reconnect failed:",
-        error.message
-      );
+  try {
+    console.log("YouTube search:", query);
 
-      scheduleReconnect();
-    }
-  }, 5000);
-}
+    const results = await searchYouTube(query);
 
-function getSocket() {
-  return socket;
-}
+    console.log(
+      "YouTube results:",
+      JSON.stringify(results, null, 2)
+    );
 
-module.exports = {
-  connectSocket,
-  getSocket
-};
+  } catch (error) {
+    console.error(
+      "YouTube search failed:",
+      error.response?.data ||
+      error.message
+    );
+  }
+});

@@ -87,11 +87,11 @@ function connect() {
 
     if (currentRoomUid) {
       socket.emit("joinRoom", {
-        roomUid: currentRoomUid,
-        name: "SKVIBEZ",
-        imageUrl: "",
-        isBot: false
-      });
+  roomUid: currentRoomUid,
+  name: "SKVIBEZ",
+  imageUrl: process.env.BOT_IMAGE_URL || "",
+  isBot: false
+});
 
       console.log("Join room request sent.");
     }

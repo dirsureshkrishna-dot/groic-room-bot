@@ -285,8 +285,9 @@ function connect() {
     }
 
     const welcomeMessage =
-      `👋 Welcome, ${participantName} to 𝑺𝑲 𝑽𝑰𝑩𝑬𝒁 ⚡️ 𝒀𝑬𝑺𝑲𝑰𝑵𝑮\n` +
-      `SKVIBEZ Music க்கு வரவேற்கிறோம்😍`;
+  `👋 𝑾𝒆𝒍𝒄𝒐𝒎𝒆, ${participantName}!\n` +
+  `🎶 𝑺𝑲 𝑽𝑰𝑩𝑬𝒁 🎶 𝑪𝑶𝑼𝑵𝑻𝑹𝒀~க்கு அன்புடன் வரவேற்கிறோம்😍\n` +
+  `𝙰𝚍𝚖𝚒𝚗 :𝒀𝑬𝑺𝑲𝑰𝑵𝑮`;
 
     console.log(
       "Sending welcome message:",

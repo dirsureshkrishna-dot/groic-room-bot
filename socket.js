@@ -322,8 +322,7 @@ function connect() {
       });
 
       return;
-    }
-  });
+      });
 
   /*
    * Welcome message

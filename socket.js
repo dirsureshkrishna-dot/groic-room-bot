@@ -16,19 +16,26 @@ let reconnectTimer = null;
 let keepAliveInterval = null;
 
 /*
+ * ========================================
+ * SOCKET DIAGNOSTICS
+ * ========================================
+ *
+ * Never log tokens or secrets.
+ */
+let socketConnectionCount = 0;
+let currentSocketInstanceId = null;
+
+
+/*
  * Users currently known to be inside the room.
  */
 let activeParticipants = new Set();
+
 
 /*
  * Prevent duplicate Welcome messages.
  */
 const welcomeCooldown = new Map();
-
-/*
- * Prevent duplicate Engine diagnostics.
- */
-let engineDiagnosticsAttached = false;
 
 
 /*
@@ -46,9 +53,6 @@ function connectSocket(roomUid) {
   /*
    * Only reset participant tracking when
    * connecting to a different room.
-   *
-   * This prevents unnecessary Welcome
-   * messages during socket recovery.
    */
   if (currentRoomUid !== roomUid) {
     activeParticipants = new Set();
@@ -58,8 +62,8 @@ function connectSocket(roomUid) {
   currentRoomUid = roomUid;
 
   /*
-   * If the existing socket is already
-   * connected, do nothing.
+   * Never create another socket if the
+   * existing socket is already connected.
    */
   if (
     socket &&
@@ -67,6 +71,11 @@ function connectSocket(roomUid) {
   ) {
     console.log(
       "Socket is already connected."
+    );
+
+    console.log(
+      "Active Socket instance:",
+      currentSocketInstanceId
     );
 
     startKeepAlive();
@@ -97,17 +106,8 @@ function connect() {
   }
 
   /*
-   * If an existing socket is currently
-   * connected, NEVER replace it.
-   *
-   * This is important because intentionally
-   * disconnecting a working socket can create
-   * the Groic:
-   *
-   * skvibez left
-   * skvibez joined
-   *
-   * sequence.
+   * If an existing socket is already
+   * connected, never replace it.
    */
   if (
     socket &&
@@ -117,30 +117,58 @@ function connect() {
       "Existing Groic Socket is already connected."
     );
 
+    console.log(
+      "Active Socket instance:",
+      currentSocketInstanceId
+    );
+
     return socket;
   }
 
+
   /*
-   * If an old disconnected socket exists,
-   * clean it up before creating a new one.
+   * Clean up an old disconnected socket
+   * before creating a new one.
    */
   if (socket) {
     try {
+      console.log(
+        "Cleaning up old disconnected socket:",
+        currentSocketInstanceId
+      );
+
       socket.removeAllListeners();
       socket.disconnect();
-    } catch (e) {
+
+    } catch (error) {
       console.log(
         "Old socket cleanup:",
-        e.message
+        error.message
       );
     }
 
     socket = null;
   }
 
+
+  /*
+   * Create a new diagnostic instance ID.
+   */
+  socketConnectionCount++;
+
+  currentSocketInstanceId =
+    `SKVIBEZ-${socketConnectionCount}-${Date.now()}`;
+
+  console.log(
+    "Creating Socket instance:",
+    currentSocketInstanceId
+  );
+
+
   console.log(
     "Connecting to Groic Socket..."
   );
+
 
   socket = io(SOCKET_URL, {
     /*
@@ -185,6 +213,7 @@ function connect() {
    * SOCKET.IO MANAGER DIAGNOSTICS
    * ========================================
    */
+
   socket.io.on(
     "reconnect_attempt",
     (attempt) => {
@@ -192,8 +221,14 @@ function connect() {
         "Socket.IO reconnect attempt:",
         attempt
       );
+
+      console.log(
+        "Socket instance:",
+        currentSocketInstanceId
+      );
     }
   );
+
 
   socket.io.on(
     "reconnect",
@@ -202,8 +237,14 @@ function connect() {
         "Socket.IO reconnected after attempts:",
         attempt
       );
+
+      console.log(
+        "Socket instance:",
+        currentSocketInstanceId
+      );
     }
   );
+
 
   socket.io.on(
     "reconnect_error",
@@ -212,14 +253,25 @@ function connect() {
         "Socket.IO reconnect error:",
         error.message
       );
+
+      console.error(
+        "Socket instance:",
+        currentSocketInstanceId
+      );
     }
   );
+
 
   socket.io.on(
     "reconnect_failed",
     () => {
       console.error(
         "Socket.IO reconnect failed."
+      );
+
+      console.error(
+        "Socket instance:",
+        currentSocketInstanceId
       );
     }
   );
@@ -230,6 +282,7 @@ function connect() {
    * SOCKET CONNECTED
    * ========================================
    */
+
   socket.on(
     "connect",
     () => {
@@ -242,11 +295,26 @@ function connect() {
         socket.id
       );
 
+      console.log(
+        "Active Socket instance:",
+        currentSocketInstanceId
+      );
+
+      console.log(
+        "Socket.IO Manager active:",
+        socket.active
+      );
+
+
       /*
-       * Attach Engine diagnostics only
-       * once for this Socket.IO Manager.
+       * Attach Engine diagnostics for
+       * this socket connection.
        */
-      attachEngineDiagnostics();
+      attachEngineDiagnostics(
+        socket,
+        currentSocketInstanceId
+      );
+
 
       if (!currentRoomUid) {
         console.log(
@@ -255,6 +323,7 @@ function connect() {
 
         return;
       }
+
 
       /*
        * Join the current YESKING room.
@@ -273,6 +342,16 @@ function connect() {
       console.log(
         "Join room request sent."
       );
+
+      console.log(
+        "Room UID:",
+        currentRoomUid
+      );
+
+      console.log(
+        "Socket instance:",
+        currentSocketInstanceId
+      );
     }
   );
 
@@ -282,12 +361,18 @@ function connect() {
    * DISCONNECTED
    * ========================================
    */
+
   socket.on(
     "disconnect",
     (reason) => {
       console.log(
         "Socket disconnected:",
         reason
+      );
+
+      console.log(
+        "Socket instance at disconnect:",
+        currentSocketInstanceId
       );
 
       console.log(
@@ -305,11 +390,17 @@ function connect() {
         socket.id
       );
 
+      console.log(
+        "Total Socket instances created:",
+        socketConnectionCount
+      );
+
+
       /*
-       * Transport close:
+       * Transport close.
        *
-       * Let Socket.IO automatic reconnect
-       * handle it.
+       * Socket.IO should automatically
+       * reconnect.
        */
       if (
         reason ===
@@ -326,6 +417,7 @@ function connect() {
         return;
       }
 
+
       /*
        * Server explicitly disconnected us.
        */
@@ -338,7 +430,18 @@ function connect() {
         );
 
         scheduleReconnect();
+
+        return;
       }
+
+
+      /*
+       * Other disconnect reasons.
+       */
+      console.log(
+        "Disconnect reason:",
+        reason
+      );
     }
   );
 
@@ -348,6 +451,7 @@ function connect() {
    * CONNECTION ERROR
    * ========================================
    */
+
   socket.on(
     "connect_error",
     (error) => {
@@ -370,12 +474,21 @@ function connect() {
         error.type
       );
 
+      console.error(
+        "Socket instance:",
+        currentSocketInstanceId
+      );
+
+
       if (error.data) {
         console.error(
           "Error data:",
-          JSON.stringify(error.data)
+          JSON.stringify(
+            error.data
+          )
         );
       }
+
 
       if (error.response) {
         console.error(
@@ -394,6 +507,7 @@ function connect() {
    * PRESENCE UPDATE
    * ========================================
    */
+
   socket.on(
     "presenceUpdate",
     (data) => {
@@ -414,6 +528,7 @@ function connect() {
       const currentParticipants =
         new Set();
 
+
       for (const user of users) {
         const username =
           user?.username || "";
@@ -426,8 +541,10 @@ function connect() {
           continue;
         }
 
+
         const normalizedUsername =
           username.toLowerCase();
+
 
         /*
          * Never Welcome SKVIBEZ.
@@ -443,9 +560,11 @@ function connect() {
           continue;
         }
 
+
         currentParticipants.add(
           normalizedUsername
         );
+
 
         /*
          * New participant.
@@ -462,6 +581,7 @@ function connect() {
         }
       }
 
+
       /*
        * Save current presence.
        */
@@ -476,6 +596,7 @@ function connect() {
    * CHAT
    * ========================================
    */
+
   socket.on(
     "chat",
     async (data) => {
@@ -484,14 +605,17 @@ function connect() {
         JSON.stringify(data)
       );
 
+
       const message =
         data?.message ||
         data?.[0]?.message ||
         "";
 
+
       if (!message) {
         return;
       }
+
 
       const normalizedMessage =
         message
@@ -504,6 +628,7 @@ function connect() {
        * !PLAY
        * ====================================
        */
+
       if (
         normalizedMessage.startsWith(
           "!play "
@@ -514,9 +639,11 @@ function connect() {
             .slice(6)
             .trim();
 
+
         if (!query) {
           return;
         }
+
 
         try {
           console.log(
@@ -524,10 +651,12 @@ function connect() {
             query
           );
 
+
           const results =
             await searchYouTube(
               query
             );
+
 
           if (
             results &&
@@ -542,6 +671,7 @@ function connect() {
              * Groic handles playback.
              */
           }
+
         } catch (error) {
           console.error(
             "YouTube search failed:",
@@ -549,6 +679,7 @@ function connect() {
             error.message
           );
         }
+
 
         return;
       }
@@ -561,12 +692,14 @@ function connect() {
    * LOG SOCKET EVENTS
    * ========================================
    */
+
   socket.onAny(
     (event, ...args) => {
       console.log(
         "Socket Event:",
         event
       );
+
 
       if (args.length > 0) {
         console.log(
@@ -577,6 +710,7 @@ function connect() {
     }
   );
 
+
   return socket;
 }
 
@@ -585,31 +719,40 @@ function connect() {
  * ========================================
  * ENGINE DIAGNOSTICS
  * ========================================
+ *
+ * Attached separately to each newly
+ * created Socket.IO engine.
  */
-function attachEngineDiagnostics() {
+function attachEngineDiagnostics(
+  socketInstance,
+  instanceId
+) {
   if (
-    engineDiagnosticsAttached
+    !socketInstance ||
+    !socketInstance.io ||
+    !socketInstance.io.engine
   ) {
+    console.log(
+      "Groic Engine is not available yet."
+    );
+
     return;
   }
 
-  if (
-    !socket ||
-    !socket.io ||
-    !socket.io.engine
-  ) {
-    return;
-  }
 
   const engine =
-    socket.io.engine;
+    socketInstance.io.engine;
 
-  engineDiagnosticsAttached =
-    true;
 
   console.log(
     "Groic Engine diagnostics enabled."
   );
+
+  console.log(
+    "Engine Socket instance:",
+    instanceId
+  );
+
 
   engine.on(
     "close",
@@ -618,8 +761,14 @@ function attachEngineDiagnostics() {
         "Groic Engine closed:",
         reason
       );
+
+      console.log(
+        "Engine closed for Socket instance:",
+        instanceId
+      );
     }
   );
+
 
   engine.on(
     "error",
@@ -628,6 +777,11 @@ function attachEngineDiagnostics() {
         "Groic Engine error:",
         error?.message ||
         error
+      );
+
+      console.error(
+        "Engine error for Socket instance:",
+        instanceId
       );
     }
   );
@@ -639,6 +793,7 @@ function attachEngineDiagnostics() {
  * WELCOME MESSAGE
  * ========================================
  */
+
 function sendWelcomeMessage(
   participantName,
   username
@@ -650,8 +805,10 @@ function sendWelcomeMessage(
     return;
   }
 
+
   const normalizedUsername =
     username.toLowerCase();
+
 
   /*
    * Never Welcome SKVIBEZ.
@@ -663,15 +820,18 @@ function sendWelcomeMessage(
     return;
   }
 
+
   /*
    * Duplicate protection.
    */
   const now = Date.now();
 
+
   const lastWelcome =
     welcomeCooldown.get(
       normalizedUsername
     ) || 0;
+
 
   if (
     now - lastWelcome <
@@ -685,19 +845,23 @@ function sendWelcomeMessage(
     return;
   }
 
+
   welcomeCooldown.set(
     normalizedUsername,
     now
   );
 
+
   const welcomeMessage =
     `🦋Welcome to 🎶 𝑺𝑲 𝑽𝑰𝑩𝑬𝒁 🎶 , ${participantName}!💥\n` +
     `அன்புடன்! 𝙮𝙚𝙨𝙠𝙞𝙣𝙜 🦋`;
+
 
   console.log(
     "Sending welcome message:",
     welcomeMessage
   );
+
 
   if (
     socket &&
@@ -710,6 +874,7 @@ function sendWelcomeMessage(
           welcomeMessage
       }
     );
+
 
     console.log(
       "Welcome message sent."
@@ -727,8 +892,8 @@ function sendWelcomeMessage(
  *
  * Do NOT call connect() here.
  *
- * We update the authentication information
- * without intentionally disconnecting the
+ * Update authentication without
+ * intentionally disconnecting the
  * current Socket.
  */
 onTokenRefresh(
@@ -736,6 +901,7 @@ onTokenRefresh(
     console.log(
       "New SKVIBEZ token received."
     );
+
 
     if (!newToken) {
       console.log(
@@ -745,6 +911,7 @@ onTokenRefresh(
       return;
     }
 
+
     if (!socket) {
       console.log(
         "Socket does not exist yet."
@@ -753,6 +920,7 @@ onTokenRefresh(
       return;
     }
 
+
     /*
      * Update Socket.IO authentication.
      */
@@ -760,6 +928,7 @@ onTokenRefresh(
       Authorization:
         newToken
     };
+
 
     if (
       socket.io &&
@@ -772,6 +941,7 @@ onTokenRefresh(
           newToken;
       }
 
+
       if (
         socket.io.opts.auth
       ) {
@@ -780,8 +950,15 @@ onTokenRefresh(
       }
     }
 
+
     console.log(
       "Groic Socket authentication updated with new token."
+    );
+
+
+    console.log(
+      "Token updated for Socket instance:",
+      currentSocketInstanceId
     );
   }
 );
@@ -792,12 +969,14 @@ onTokenRefresh(
  * KEEP ALIVE
  * ========================================
  */
+
 function startKeepAlive() {
   if (keepAliveInterval) {
     clearInterval(
       keepAliveInterval
     );
   }
+
 
   keepAliveInterval =
     setInterval(
@@ -811,6 +990,7 @@ function startKeepAlive() {
             "Sending Groic room sync..."
           );
 
+
           socket.emit(
             "requestSync",
             {
@@ -823,6 +1003,7 @@ function startKeepAlive() {
       10000
     );
 
+
   console.log(
     "Groic 10-second keep-alive enabled."
   );
@@ -834,10 +1015,16 @@ function startKeepAlive() {
  * RECONNECT
  * ========================================
  */
+
 function scheduleReconnect() {
   if (reconnectTimer) {
+    console.log(
+      "Reconnect already scheduled."
+    );
+
     return;
   }
+
 
   reconnectTimer =
     setTimeout(
@@ -845,15 +1032,15 @@ function scheduleReconnect() {
         reconnectTimer =
           null;
 
+
         console.log(
           "Attempting socket recovery..."
         );
 
+
         try {
           /*
-           * If Socket.IO has already
-           * reconnected, don't create
-           * another connection.
+           * Already connected.
            */
           if (
             socket &&
@@ -866,9 +1053,10 @@ function scheduleReconnect() {
             return;
           }
 
+
           /*
-           * If Socket.IO is already actively
-           * reconnecting, let it continue.
+           * Socket.IO is already actively
+           * reconnecting.
            */
           if (
             socket &&
@@ -881,6 +1069,11 @@ function scheduleReconnect() {
             return;
           }
 
+
+          /*
+           * Create a new socket only when
+           * the existing one is not active.
+           */
           connect();
 
         } catch (error) {
@@ -891,6 +1084,7 @@ function scheduleReconnect() {
 
           scheduleReconnect();
         }
+
       },
       5000
     );
@@ -902,6 +1096,7 @@ function scheduleReconnect() {
  * GET SOCKET
  * ========================================
  */
+
 function getSocket() {
   return socket;
 }
@@ -912,6 +1107,7 @@ function getSocket() {
  * EXPORTS
  * ========================================
  */
+
 module.exports = {
   connectSocket,
   getSocket

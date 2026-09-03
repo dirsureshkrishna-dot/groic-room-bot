@@ -234,10 +234,12 @@ function connect() {
       welcomeMessage
     );
 
-    socket.emit("chat", {
-      roomUid: currentRoomUid,
-      message: welcomeMessage
-    });
+    socket.emit("chat", [
+  {
+    roomUid: currentRoomUid,
+    message: welcomeMessage
+  }
+]);
 
     console.log(
       "Welcome message emit completed."

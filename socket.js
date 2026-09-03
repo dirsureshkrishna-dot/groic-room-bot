@@ -8,8 +8,11 @@ let socket = null;
 let currentRoomUid = null;
 let reconnectTimer = null;
 
+let knownParticipants = new Set();
+
 function connectSocket(roomUid) {
   currentRoomUid = roomUid;
+  knownParticipants = new Set();
 
   connect();
 
@@ -64,3 +67,233 @@ function connect() {
 
     if (currentRoomUid) {
       socket.emit("joinRoom", {
+        roomUid: currentRoomUid,
+        name: "SKVIBEZ",
+        imageUrl: "",
+        isBot: false
+      });
+
+      console.log("Join room request sent.");
+    }
+  });
+
+  socket.on("disconnect", (reason) => {
+    console.log("Socket disconnected:", reason);
+
+    if (reason === "io server disconnect") {
+      console.log(
+        "Groic server disconnected the bot. Reconnecting..."
+      );
+
+      scheduleReconnect();
+    }
+  });
+
+  socket.on("connect_error", (error) => {
+    console.error("Socket connection error:");
+    console.error("Message:", error.message);
+    console.error("Description:", error.description);
+    console.error("Context:", error.context);
+    console.error("Type:", error.type);
+  });
+
+  socket.on("reconnect", (attempt) => {
+    console.log(
+      "Socket reconnected. Attempt:",
+      attempt
+    );
+  });
+
+  /*
+   * Presence / participants
+   */
+  socket.on("presenceUpdate", (data) => {
+    console.log(
+      "Presence update:",
+      JSON.stringify(data)
+    );
+
+    const users =
+      data?.activeUsers ||
+      data?.[0]?.activeUsers ||
+      [];
+
+    if (!Array.isArray(users)) {
+      return;
+    }
+
+    for (const user of users) {
+      const username = user?.username || "";
+      const participantName =
+        user?.name || username;
+
+      if (!username) {
+        continue;
+      }
+
+      /*
+       * Ignore SKVIBEZ itself
+       */
+      if (username.toLowerCase() === "skvibez") {
+        knownParticipants.add(username);
+        continue;
+      }
+
+      /*
+       * Detect new participant
+       */
+      if (!knownParticipants.has(username)) {
+        knownParticipants.add(username);
+
+        console.log(
+          "New participant:",
+          participantName
+        );
+
+        sendWelcomeMessage(participantName);
+      }
+    }
+  });
+
+  /*
+   * Chat messages
+   */
+  socket.on("chat", async (data) => {
+    console.log(
+      "Chat message:",
+      JSON.stringify(data)
+    );
+
+    const message =
+      data?.message ||
+      data?.[0]?.message ||
+      "";
+
+    if (!message) {
+      return;
+    }
+
+    /*
+     * !play command
+     */
+    if (
+      message
+        .toLowerCase()
+        .startsWith("!play ")
+    ) {
+      const query = message
+        .slice(6)
+        .trim();
+
+      if (!query) {
+        return;
+      }
+
+      try {
+        console.log(
+          "YouTube search:",
+          query
+        );
+
+        const results =
+          await searchYouTube(query);
+
+        console.log(
+          "YouTube results:",
+          JSON.stringify(
+            results,
+            null,
+            2
+          )
+        );
+
+      } catch (error) {
+        console.error(
+          "YouTube search failed:",
+          error.response?.data ||
+          error.message
+        );
+      }
+    }
+  });
+
+  /*
+   * Welcome message
+   */
+  function sendWelcomeMessage(participantName) {
+    if (!participantName) {
+      return;
+    }
+
+    const welcomeMessage =
+      `👋 Welcome, ${participantName} to 𝑺𝑲 𝑽𝑰𝑩𝑬𝒁 ⚡️ 𝒀𝑬𝑺𝑲𝑰𝑵𝑮\n` +
+      `SKVIBEZ Music க்கு வரவேற்கிறோம்😍`;
+
+    console.log(
+      "Sending welcome message:",
+      welcomeMessage
+    );
+
+    socket.emit("chat", {
+      roomUid: currentRoomUid,
+      message: welcomeMessage
+    });
+
+    console.log(
+      "Welcome message emit completed."
+    );
+  }
+
+  /*
+   * Log all socket events
+   */
+  socket.onAny((event, ...args) => {
+    console.log(
+      "Socket Event:",
+      event
+    );
+
+    if (args.length > 0) {
+      console.log(
+        "Socket Data:",
+        JSON.stringify(args)
+      );
+    }
+  });
+
+  return socket;
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) {
+    return;
+  }
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+
+    console.log(
+      "Attempting socket reconnect..."
+    );
+
+    try {
+      connect();
+    } catch (error) {
+      console.error(
+        "Reconnect failed:",
+        error.message
+      );
+
+      scheduleReconnect();
+    }
+  }, 5000);
+}
+
+function getSocket() {
+  return socket;
+}
+
+module.exports = {
+  connectSocket,
+  getSocket
+};

@@ -300,12 +300,9 @@ function connect() {
      * The next step will be testing whether Groic
      * actually accepts this payload.
      */
-    socket.emit("chat", [
-      {
-        roomUid: currentRoomUid,
-        message: welcomeMessage
-      }
-    ]);
+    socket.emit("sendChat", {
+  message: welcomeMessage
+});
 
     console.log(
       "Welcome message emit completed."

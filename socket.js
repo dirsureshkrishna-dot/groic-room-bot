@@ -293,36 +293,37 @@ function connect() {
 
       return;
     }
-
-    /*
-     * !nowplaying command
-     */
-    if (
+/*
+ * !nowplaying command
+ */
+if (
   normalizedMessage === "!nowplaying"
 ) {
+  if (!nowPlaying) {
+    socket.emit("sendChat", {
+      message: "🎶 தற்போது எந்த பாடலும் Playing-ல் இல்லை."
+    });
+
+    return;
+  }
+
+  const nowPlayingMessage =
+    `🎶 Now Playing 🎶\n` +
+    `🎵 ${nowPlaying.title}\n` +
+    `🎤 ${nowPlaying.channel}\n` +
+    `🔗 ${nowPlaying.url}`;
+
+  console.log(
+    "Sending now playing:",
+    nowPlayingMessage
+  );
+
   socket.emit("sendChat", {
-    message: "🎶 Now Playing: Anbe Sivam 🎶"
+    message: nowPlayingMessage
   });
 
   return;
 }
-      const nowPlayingMessage =
-        `🎶 𝑵𝒐𝒘 𝑷𝒍𝒂𝒚𝒊𝒏𝒈 🎶\n` +
-        `🎵 ${nowPlaying.title}\n` +
-        `🎤 ${nowPlaying.channel}\n` +
-        `🔗 ${nowPlaying.url}`;
-
-      console.log(
-        "Sending now playing:",
-        nowPlayingMessage
-      );
-
-      socket.emit("sendChat", {
-        message: nowPlayingMessage
-      });
-
-      return;
-      });
 
   /*
    * Welcome message

@@ -551,34 +551,27 @@ onTokenRefresh(
  */
 function startKeepAlive() {
   if (keepAliveInterval) {
-    clearInterval(
-      keepAliveInterval
-    );
+    clearInterval(keepAliveInterval);
   }
 
-  keepAliveInterval =
-    setInterval(() => {
-      if (
-        socket &&
-        socket.connected &&
-        currentRoomUid
-      ) {
-        console.log(
-          "Sending Groic room sync..."
-        );
+  keepAliveInterval = setInterval(() => {
+    if (
+      socket &&
+      socket.connected &&
+      currentRoomUid
+    ) {
+      console.log(
+        "Sending Groic room sync..."
+      );
 
-        socket.emit(
-          "requestSync",
-          {
-            roomUid:
-              currentRoomUid
-          }
-        );
-      }
-    }, 30000);
+      socket.emit("requestSync", {
+        roomUid: currentRoomUid
+      });
+    }
+  }, 10000);
 
   console.log(
-    "Groic 30-second keep-alive enabled."
+    "Groic 10-second keep-alive enabled."
   );
 }
 

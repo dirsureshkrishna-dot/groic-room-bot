@@ -9,35 +9,44 @@ let currentRoomUid = null;
 let reconnectTimer = null;
 
 /*
- * Current participants
+ * Participants currently inside the room
  */
 let activeParticipants = new Set();
 
 /*
- * Current selected song
+ * Prevent duplicate Welcome messages
  */
-let nowPlaying = null;
+const welcomeCooldown = new Map();
 
+/*
+ * Connect SKVIBEZ to the room
+ */
 function connectSocket(roomUid) {
   currentRoomUid = roomUid;
 
-  /*
-   * Reset participant tracking
-   */
   activeParticipants = new Set();
+  welcomeCooldown.clear();
 
   connect();
 
   return socket;
 }
 
+/*
+ * Create socket connection
+ */
 function connect() {
   const token = getToken();
 
   if (!token) {
-    throw new Error("Authentication token is missing.");
+    throw new Error(
+      "Authentication token is missing."
+    );
   }
 
+  /*
+   * Close old socket
+   */
   if (socket) {
     try {
       socket.removeAllListeners();
@@ -45,7 +54,9 @@ function connect() {
     } catch (e) {}
   }
 
-  console.log("Connecting to Groic Socket...");
+  console.log(
+    "Connecting to Groic Socket..."
+  );
 
   socket = io(SOCKET_URL, {
     transports: ["websocket"],
@@ -74,264 +85,57 @@ function connect() {
   });
 
   /*
-   * Socket connected
+   * ========================================
+   * SEND WELCOME MESSAGE
+   * ========================================
    */
-  socket.on("connect", () => {
-    console.log("Groic Socket connected.");
-    console.log("Socket ID:", socket.id);
-
-    /*
-     * Rebuild participant list
-     * from the next presence update.
-     */
-    activeParticipants = new Set();
-
-    if (currentRoomUid) {
-      socket.emit("joinRoom", {
-        roomUid: currentRoomUid,
-        name: "SKVIBEZ",
-        imageUrl: process.env.BOT_IMAGE_URL || "",
-        isBot: false
-      });
-
-      console.log("Join room request sent.");
-    }
-  });
-
-  /*
-   * Socket disconnected
-   */
-  socket.on("disconnect", (reason) => {
-    console.log("Socket disconnected:", reason);
-
-    if (reason === "io server disconnect") {
-      console.log(
-        "Groic server disconnected the bot. Reconnecting..."
-      );
-
-      scheduleReconnect();
-    }
-  });
-
-  /*
-   * Connection error
-   */
-  socket.on("connect_error", (error) => {
-    console.error("Socket connection error:");
-    console.error("Message:", error.message);
-    console.error("Description:", error.description);
-    console.error("Context:", error.context);
-    console.error("Type:", error.type);
-  });
-
-  /*
-   * Reconnected
-   */
-  socket.on("reconnect", (attempt) => {
-    console.log(
-      "Socket reconnected. Attempt:",
-      attempt
-    );
-  });
-
-  /*
-   * Presence / participants
-   */
-  socket.on("presenceUpdate", (data) => {
-    console.log(
-      "Presence update:",
-      JSON.stringify(data)
-    );
-
-    const users =
-      data?.activeUsers ||
-      data?.[0]?.activeUsers ||
-      [];
-
-    if (!Array.isArray(users)) {
+  function sendWelcomeMessage(
+    participantName,
+    username
+  ) {
+    if (!participantName || !username) {
       return;
     }
 
-    /*
-     * Participants currently present
-     * in this update.
-     */
-    const currentParticipants = new Set();
-
-    for (const user of users) {
-      const username = user?.username || "";
-      const participantName =
-        user?.name || username;
-
-      if (!username) {
-        continue;
-      }
-
-      const normalizedUsername =
-        username.toLowerCase();
-
-      /*
-       * Never welcome SKVIBEZ itself.
-       */
-      if (normalizedUsername === "skvibez") {
-        currentParticipants.add(
-          normalizedUsername
-        );
-
-        continue;
-      }
-
-      /*
-       * Add current participant.
-       */
-      currentParticipants.add(
-        normalizedUsername
-      );
-
-      /*
-       * New join detection.
-       *
-       * If the user was not in the previous
-       * presence list, send Welcome.
-       */
-      if (!activeParticipants.has(normalizedUsername)) {
-        console.log(
-          "New participant:",
-          participantName
-        );
-
-        sendWelcomeMessage(participantName);
-      }
-    }
+    const normalizedUsername =
+      username.toLowerCase();
 
     /*
-     * Replace old participant list.
-     *
-     * Leave -> removed
-     * Rejoin -> Welcome again
-     */
-    activeParticipants =
-      currentParticipants;
-  });
-
-  /*
-   * Chat messages
-   */
-  socket.on("chat", async (data) => {
-    console.log(
-      "Chat message:",
-      JSON.stringify(data)
-    );
-
-    const message =
-      data?.message ||
-      data?.[0]?.message ||
-      "";
-
-    if (!message) {
-      return;
-    }
-
-    const normalizedMessage =
-      message.toLowerCase().trim();
-
-    /*
-     * !play command
+     * Never Welcome SKVIBEZ itself
      */
     if (
-      normalizedMessage.startsWith("!play ")
+      normalizedUsername === "skvibez"
     ) {
-      const query = message
-        .slice(6)
-        .trim();
+      return;
+    }
 
-      if (!query) {
-        return;
-      }
+    /*
+     * Prevent duplicate Welcome messages
+     * caused by repeated presenceUpdate events.
+     */
+    const now = Date.now();
 
-      try {
-        console.log(
-          "YouTube search:",
-          query
-        );
+    const lastWelcome =
+      welcomeCooldown.get(
+        normalizedUsername
+      ) || 0;
 
-        const results =
-          await searchYouTube(query);
-
-        console.log(
-          "YouTube results:",
-          JSON.stringify(
-            results,
-            null,
-            2
-          )
-        );
-
-        /*
-         * Save the first YouTube result
-         * as the current selected song.
-         */
-        if (results.length > 0) {
-          nowPlaying = results[0];
-
-          console.log(
-            "Now Playing:",
-            JSON.stringify(
-              nowPlaying,
-              null,
-              2
-            )
-          );
-        }
-      } catch (error) {
-        console.error(
-          "YouTube search failed:",
-          error.response?.data ||
-          error.message
-        );
-      }
+    /*
+     * Ignore duplicate event within 15 seconds.
+     */
+    if (now - lastWelcome < 15000) {
+      console.log(
+        "Welcome skipped (duplicate):",
+        participantName
+      );
 
       return;
     }
-/*
- * !nowplaying command
- */
-if (
-  normalizedMessage === "!nowplaying"
-) {
-  if (!nowPlaying) {
-    socket.emit("sendChat", {
-      message: "🎶 தற்போது எந்த பாடலும் Playing-ல் இல்லை."
-    });
 
-    return;
-  }
-
-  const nowPlayingMessage =
-    `🎶 Now Playing 🎶\n` +
-    `🎵 ${nowPlaying.title}\n` +
-    `🎤 ${nowPlaying.channel}\n` +
-    `🔗 ${nowPlaying.url}`;
-
-  console.log(
-    "Sending now playing:",
-    nowPlayingMessage
-  );
-
-  socket.emit("sendChat", {
-    message: nowPlayingMessage
-  });
-
-  return;
-}
-
-  /*
-   * Welcome message
-   */
-  function sendWelcomeMessage(participantName) {
-    if (!participantName) {
-      return;
-    }
+    welcomeCooldown.set(
+      normalizedUsername,
+      now
+    );
 
     const welcomeMessage =
       `🦋Welcome to 🎶 𝑺𝑲 𝑽𝑰𝑩𝑬𝒁 🎶 , ${participantName}!💥\n` +
@@ -342,63 +146,374 @@ if (
       welcomeMessage
     );
 
+    /*
+     * Groic outgoing chat event
+     */
     socket.emit("sendChat", {
       message: welcomeMessage
     });
 
     console.log(
-      "Welcome message emit completed."
+      "Welcome message sent."
     );
   }
 
   /*
-   * Log all socket events
+   * ========================================
+   * SOCKET CONNECTED
+   * ========================================
    */
-  socket.onAny((event, ...args) => {
+  socket.on("connect", () => {
     console.log(
-      "Socket Event:",
-      event
+      "Groic Socket connected."
     );
 
-    if (args.length > 0) {
+    console.log(
+      "Socket ID:",
+      socket.id
+    );
+
+    /*
+     * New connection.
+     */
+    activeParticipants =
+      new Set();
+
+    if (currentRoomUid) {
+      socket.emit("joinRoom", {
+        roomUid: currentRoomUid,
+        name: "SKVIBEZ",
+        imageUrl:
+          process.env.BOT_IMAGE_URL || "",
+        isBot: false
+      });
+
       console.log(
-        "Socket Data:",
-        JSON.stringify(args)
+        "Join room request sent."
       );
     }
   });
+
+  /*
+   * ========================================
+   * DISCONNECTED
+   * ========================================
+   */
+  socket.on("disconnect", (reason) => {
+    console.log(
+      "Socket disconnected:",
+      reason
+    );
+
+    if (
+      reason ===
+      "io server disconnect"
+    ) {
+      console.log(
+        "Groic server disconnected the bot."
+      );
+
+      scheduleReconnect();
+    }
+  });
+
+  /*
+   * ========================================
+   * CONNECTION ERROR
+   * ========================================
+   */
+  socket.on(
+    "connect_error",
+    (error) => {
+      console.error(
+        "Socket connection error:"
+      );
+
+      console.error(
+        "Message:",
+        error.message
+      );
+
+      console.error(
+        "Description:",
+        error.description
+      );
+
+      console.error(
+        "Context:",
+        error.context
+      );
+
+      console.error(
+        "Type:",
+        error.type
+      );
+    }
+  );
+
+  /*
+   * ========================================
+   * RECONNECTED
+   * ========================================
+   */
+  socket.on(
+    "reconnect",
+    (attempt) => {
+      console.log(
+        "Socket reconnected. Attempt:",
+        attempt
+      );
+    }
+  );
+
+  /*
+   * ========================================
+   * PRESENCE UPDATE
+   * ========================================
+   */
+  socket.on(
+    "presenceUpdate",
+    (data) => {
+      console.log(
+        "Presence update:",
+        JSON.stringify(data)
+      );
+
+      const users =
+        data?.activeUsers ||
+        data?.[0]?.activeUsers ||
+        [];
+
+      if (!Array.isArray(users)) {
+        return;
+      }
+
+      /*
+       * Participants in the current update
+       */
+      const currentParticipants =
+        new Set();
+
+      for (const user of users) {
+        const username =
+          user?.username || "";
+
+        const participantName =
+          user?.name ||
+          username;
+
+        if (!username) {
+          continue;
+        }
+
+        const normalizedUsername =
+          username.toLowerCase();
+
+        /*
+         * SKVIBEZ itself
+         */
+        if (
+          normalizedUsername ===
+          "skvibez"
+        ) {
+          currentParticipants.add(
+            normalizedUsername
+          );
+
+          continue;
+        }
+
+        /*
+         * Add participant
+         */
+        currentParticipants.add(
+          normalizedUsername
+        );
+
+        /*
+         * New participant
+         */
+        if (
+          !activeParticipants.has(
+            normalizedUsername
+          )
+        ) {
+          console.log(
+            "New participant:",
+            participantName
+          );
+
+          sendWelcomeMessage(
+            participantName,
+            normalizedUsername
+          );
+        }
+      }
+
+      /*
+       * Save current room participants
+       *
+       * If someone leaves, they are removed.
+       * If they return later, Welcome will be sent.
+       */
+      activeParticipants =
+        currentParticipants;
+    }
+  );
+
+  /*
+   * ========================================
+   * CHAT MESSAGES
+   * ========================================
+   */
+  socket.on(
+    "chat",
+    async (data) => {
+      console.log(
+        "Chat message:",
+        JSON.stringify(data)
+      );
+
+      const message =
+        data?.message ||
+        data?.[0]?.message ||
+        "";
+
+      if (!message) {
+        return;
+      }
+
+      const normalizedMessage =
+        message
+          .toLowerCase()
+          .trim();
+
+      /*
+       * ====================================
+       * !play COMMAND
+       * ====================================
+       */
+      if (
+        normalizedMessage.startsWith(
+          "!play "
+        )
+      ) {
+        const query =
+          message
+            .slice(6)
+            .trim();
+
+        if (!query) {
+          return;
+        }
+
+        try {
+          console.log(
+            "YouTube search:",
+            query
+          );
+
+          const results =
+            await searchYouTube(
+              query
+            );
+
+          console.log(
+            "YouTube results:",
+            JSON.stringify(
+              results,
+              null,
+              2
+            )
+          );
+
+          /*
+           * Groic handles the actual
+           * music playback.
+           *
+           * We only perform YouTube search
+           * here for the bot integration.
+           */
+          if (
+            results &&
+            results.length > 0
+          ) {
+            console.log(
+              "YouTube result found:",
+              results[0].title
+            );
+          }
+        } catch (error) {
+          console.error(
+            "YouTube search failed:",
+            error.response?.data ||
+            error.message
+          );
+        }
+
+        return;
+      }
+    }
+  );
+
+  /*
+   * ========================================
+   * LOG ALL SOCKET EVENTS
+   * ========================================
+   */
+  socket.onAny(
+    (event, ...args) => {
+      console.log(
+        "Socket Event:",
+        event
+      );
+
+      if (args.length > 0) {
+        console.log(
+          "Socket Data:",
+          JSON.stringify(args)
+        );
+      }
+    }
+  );
 
   return socket;
 }
 
 /*
- * Reconnect
+ * ========================================
+ * RECONNECT
+ * ========================================
  */
 function scheduleReconnect() {
   if (reconnectTimer) {
     return;
   }
 
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
+  reconnectTimer =
+    setTimeout(() => {
+      reconnectTimer = null;
 
-    console.log(
-      "Attempting socket reconnect..."
-    );
-
-    try {
-      connect();
-    } catch (error) {
-      console.error(
-        "Reconnect failed:",
-        error.message
+      console.log(
+        "Attempting socket reconnect..."
       );
 
-      scheduleReconnect();
-    }
-  }, 5000);
+      try {
+        connect();
+      } catch (error) {
+        console.error(
+          "Reconnect failed:",
+          error.message
+        );
+
+        scheduleReconnect();
+      }
+    }, 5000);
 }
 
+/*
+ * Get current socket
+ */
 function getSocket() {
   return socket;
 }

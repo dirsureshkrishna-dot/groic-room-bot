@@ -298,17 +298,14 @@ function connect() {
      * !nowplaying command
      */
     if (
-      normalizedMessage === "!nowplaying"
-    ) {
-      if (!nowPlaying) {
-        socket.emit("sendChat", {
-          message:
-            "🎶 இப்போது எந்த பாடலும் தேர்வு செய்யப்படவில்லை."
-        });
+  normalizedMessage === "!nowplaying"
+) {
+  socket.emit("sendChat", {
+    message: "🎶 Now Playing: Anbe Sivam 🎶"
+  });
 
-        return;
-      }
-
+  return;
+}
       const nowPlayingMessage =
         `🎶 𝑵𝒐𝒘 𝑷𝒍𝒂𝒚𝒊𝒏𝒈 🎶\n` +
         `🎵 ${nowPlaying.title}\n` +

@@ -152,6 +152,9 @@ function connect() {
         "Socket disconnected:",
         reason
       );
+      console.log("Socket active:", socket.active);
+console.log("Socket connected:", socket.connected);
+console.log("Socket ID at disconnect:", socket.id);
 
       /*
        * Socket.IO normally reconnects automatically.

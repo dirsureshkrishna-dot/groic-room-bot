@@ -11,6 +11,10 @@ let TOKENS = {
   yesking: ""
 };
 
+let refreshTimer = null;
+
+const refreshListeners = new Set();
+
 async function refreshToken(refreshToken, accountName) {
   const url =
     `https://securetoken.googleapis.com/v1/token?key=${FIREBASE_API_KEY}`;
@@ -66,6 +70,9 @@ async function refreshToken(refreshToken, accountName) {
   }
 }
 
+/*
+ * Refresh SKVIBEZ token
+ */
 async function refreshAccessToken() {
   if (!REFRESH_TOKEN) {
     throw new Error(
@@ -73,12 +80,31 @@ async function refreshAccessToken() {
     );
   }
 
-  return refreshToken(
+  const token = await refreshToken(
     REFRESH_TOKEN,
     "skvibez"
   );
+
+  /*
+   * Tell socket.js that the token changed.
+   */
+  for (const listener of refreshListeners) {
+    try {
+      await listener(token);
+    } catch (error) {
+      console.error(
+        "Token refresh listener error:",
+        error.message
+      );
+    }
+  }
+
+  return token;
 }
 
+/*
+ * Refresh YESKING token
+ */
 async function refreshYeskingAccessToken() {
   if (!YESKING_REFRESH_TOKEN) {
     throw new Error(
@@ -92,6 +118,64 @@ async function refreshYeskingAccessToken() {
   );
 }
 
+/*
+ * Start automatic SKVIBEZ token refresh.
+ *
+ * Firebase ID tokens normally have a limited lifetime.
+ * Refresh before expiry to avoid Unauthorized disconnects.
+ */
+function startTokenRefresh() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+  }
+
+  /*
+   * Refresh every 50 minutes.
+   */
+  refreshTimer = setInterval(
+    async () => {
+      console.log(
+        "Refreshing SKVIBEZ Firebase token..."
+      );
+
+      try {
+        await refreshAccessToken();
+
+        console.log(
+          "SKVIBEZ Firebase token refreshed."
+        );
+
+      } catch (error) {
+        console.error(
+          "Automatic token refresh failed:",
+          error.response?.data ||
+          error.message
+        );
+      }
+    },
+    50 * 60 * 1000
+  );
+
+  console.log(
+    "Automatic token refresh enabled."
+  );
+}
+
+/*
+ * Allow socket.js to receive refreshed tokens.
+ */
+function onTokenRefresh(listener) {
+  if (typeof listener !== "function") {
+    return;
+  }
+
+  refreshListeners.add(listener);
+
+  return () => {
+    refreshListeners.delete(listener);
+  };
+}
+
 function getToken() {
   return TOKENS.skvibez;
 }
@@ -103,6 +187,8 @@ function getYeskingToken() {
 module.exports = {
   refreshAccessToken,
   refreshYeskingAccessToken,
+  startTokenRefresh,
+  onTokenRefresh,
   getToken,
   getYeskingToken
 };

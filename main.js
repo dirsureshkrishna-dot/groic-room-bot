@@ -1,9 +1,7 @@
 const { refreshAccessToken } = require("./auth");
-const { createRoom } = require("./api");
 const { connectSocket } = require("./socket");
 
 const {
-  ROOM_NAME,
   BOT_NAME
 } = require("./config/env");
 
@@ -13,34 +11,29 @@ async function startBot() {
     console.log("SKVIBEZ Groic Bot Starting...");
     console.log("================================");
 
+    // Authenticate as SKVIBEZ
     await refreshAccessToken();
 
-    let roomUid = process.env.ROOM_UID;
+    // Use the room created by YESKING
+    const roomUid = process.env.ROOM_UID;
 
-    if (roomUid) {
-      console.log("Using existing YESKING room.");
-      console.log("Room UID:", roomUid);
-    } else {
-      console.log("No ROOM_UID found.");
-      console.log("Creating a new room...");
-
-      roomUid = await createRoom();
-
-      console.log("");
-      console.log("Room created successfully!");
-      console.log("Room Name:", ROOM_NAME);
-      console.log("Room UID:", roomUid);
+    if (!roomUid) {
+      throw new Error(
+        "ROOM_UID is missing. Add the YESKING room UID in Railway Variables."
+      );
     }
 
     console.log("");
-    console.log("Bot Name:", BOT_NAME);
+    console.log("Using YESKING room.");
     console.log("Room UID:", roomUid);
+    console.log("Bot Name:", BOT_NAME);
 
     console.log("");
     console.log(
       `Room Link: https://groic.in/room/${roomUid}?autoJoin=true`
     );
 
+    // Connect SKVIBEZ to YESKING's room
     connectSocket(roomUid);
 
     console.log("");

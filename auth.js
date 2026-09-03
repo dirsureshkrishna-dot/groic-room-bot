@@ -2,19 +2,23 @@ const axios = require("axios");
 
 const {
   FIREBASE_API_KEY,
-  REFRESH_TOKEN
+  REFRESH_TOKEN,
+  YESKING_REFRESH_TOKEN
 } = require("./config/env");
 
-let TOKEN = "";
+let TOKENS = {
+  skvibez: "",
+  yesking: ""
+};
 
-async function refreshAccessToken() {
+async function refreshToken(refreshToken, accountName) {
   const url =
     `https://securetoken.googleapis.com/v1/token?key=${FIREBASE_API_KEY}`;
 
   const params = new URLSearchParams();
 
   params.append("grant_type", "refresh_token");
-  params.append("refresh_token", REFRESH_TOKEN);
+  params.append("refresh_token", refreshToken);
 
   try {
     const response = await axios.post(
@@ -29,26 +33,28 @@ async function refreshAccessToken() {
       }
     );
 
-    TOKEN =
+    const token =
       response.data.id_token ||
       response.data.access_token ||
       "";
 
-    if (!TOKEN) {
+    if (!token) {
       throw new Error(
-        "Firebase did not return an access token."
+        `${accountName} Firebase token was not returned.`
       );
     }
 
+    TOKENS[accountName] = token;
+
     console.log(
-      "Firebase authentication successful."
+      `${accountName.toUpperCase()} authentication successful.`
     );
 
-    return TOKEN;
+    return token;
 
   } catch (error) {
     console.error(
-      "Firebase authentication failed:"
+      `${accountName.toUpperCase()} authentication failed:`
     );
 
     console.error(
@@ -60,11 +66,43 @@ async function refreshAccessToken() {
   }
 }
 
+async function refreshAccessToken() {
+  if (!REFRESH_TOKEN) {
+    throw new Error(
+      "REFRESH_TOKEN is missing from Railway Variables."
+    );
+  }
+
+  return refreshToken(
+    REFRESH_TOKEN,
+    "skvibez"
+  );
+}
+
+async function refreshYeskingAccessToken() {
+  if (!YESKING_REFRESH_TOKEN) {
+    throw new Error(
+      "YESKING_REFRESH_TOKEN is missing from Railway Variables."
+    );
+  }
+
+  return refreshToken(
+    YESKING_REFRESH_TOKEN,
+    "yesking"
+  );
+}
+
 function getToken() {
-  return TOKEN;
+  return TOKENS.skvibez;
+}
+
+function getYeskingToken() {
+  return TOKENS.yesking;
 }
 
 module.exports = {
   refreshAccessToken,
-  getToken
+  refreshYeskingAccessToken,
+  getToken,
+  getYeskingToken
 };

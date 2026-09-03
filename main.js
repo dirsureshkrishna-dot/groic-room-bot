@@ -1,4 +1,7 @@
-const { refreshAccessToken } = require("./auth");
+const {
+  refreshAccessToken,
+  startTokenRefresh
+} = require("./auth");
 const { connectSocket } = require("./socket");
 
 const {
@@ -10,10 +13,11 @@ async function startBot() {
     console.log("================================");
     console.log("SKVIBEZ Groic Bot Starting...");
     console.log("================================");
+// Authenticate as SKVIBEZ
+await refreshAccessToken();
 
-    // Authenticate as SKVIBEZ
-    await refreshAccessToken();
-
+// Start automatic token refresh
+startTokenRefresh();
     // Use the room created by YESKING
     const roomUid = process.env.ROOM_UID;
 

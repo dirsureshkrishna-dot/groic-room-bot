@@ -9,19 +9,20 @@ let currentRoomUid = null;
 let reconnectTimer = null;
 
 /*
- * Current participants in the room
- *
- * ஒருவர் room-ல் இருக்கும் வரை இங்கே இருப்பார்.
- * வெளியே சென்றால் அடுத்த presenceUpdate-ல் Set-ல் இருந்து நீக்கப்படுவார்.
- * மீண்டும் வந்தால் புதிய participant ஆக கருதப்பட்டு Welcome வரும்.
+ * Current participants
  */
 let activeParticipants = new Set();
+
+/*
+ * Current selected song
+ */
+let nowPlaying = null;
 
 function connectSocket(roomUid) {
   currentRoomUid = roomUid;
 
   /*
-   * New connection என்றால் participant tracking-ஐ reset செய்கிறோம்.
+   * Reset participant tracking
    */
   activeParticipants = new Set();
 
@@ -80,18 +81,18 @@ function connect() {
     console.log("Socket ID:", socket.id);
 
     /*
-     * New socket connection.
-     * Current participant list will be rebuilt from presenceUpdate.
+     * Rebuild participant list
+     * from the next presence update.
      */
     activeParticipants = new Set();
 
     if (currentRoomUid) {
       socket.emit("joinRoom", {
-  roomUid: currentRoomUid,
-  name: "SKVIBEZ",
-  imageUrl: process.env.BOT_IMAGE_URL || "",
-  isBot: false
-});
+        roomUid: currentRoomUid,
+        name: "SKVIBEZ",
+        imageUrl: process.env.BOT_IMAGE_URL || "",
+        isBot: false
+      });
 
       console.log("Join room request sent.");
     }
@@ -152,7 +153,8 @@ function connect() {
     }
 
     /*
-     * Participants currently present in this update.
+     * Participants currently present
+     * in this update.
      */
     const currentParticipants = new Set();
 
@@ -180,15 +182,17 @@ function connect() {
       }
 
       /*
-       * Keep track of everyone currently inside.
+       * Add current participant.
        */
       currentParticipants.add(
         normalizedUsername
       );
 
       /*
-       * If this username was NOT in the previous
-       * participant list, they have newly joined.
+       * New join detection.
+       *
+       * If the user was not in the previous
+       * presence list, send Welcome.
        */
       if (!activeParticipants.has(normalizedUsername)) {
         console.log(
@@ -201,18 +205,13 @@ function connect() {
     }
 
     /*
-     * IMPORTANT:
+     * Replace old participant list.
      *
-     * Replace the old list with the current list.
-     *
-     * Therefore:
-     *
-     * Malar enters  -> Welcome
-     * Malar stays   -> No duplicate
-     * Malar leaves  -> Removed from Set
-     * Malar enters  -> Welcome again
+     * Leave -> removed
+     * Rejoin -> Welcome again
      */
-    activeParticipants = currentParticipants;
+    activeParticipants =
+      currentParticipants;
   });
 
   /*
@@ -233,13 +232,14 @@ function connect() {
       return;
     }
 
+    const normalizedMessage =
+      message.toLowerCase().trim();
+
     /*
      * !play command
      */
     if (
-      message
-        .toLowerCase()
-        .startsWith("!play ")
+      normalizedMessage.startsWith("!play ")
     ) {
       const query = message
         .slice(6)
@@ -266,6 +266,23 @@ function connect() {
             2
           )
         );
+
+        /*
+         * Save the first YouTube result
+         * as the current selected song.
+         */
+        if (results.length > 0) {
+          nowPlaying = results[0];
+
+          console.log(
+            "Now Playing:",
+            JSON.stringify(
+              nowPlaying,
+              null,
+              2
+            )
+          );
+        }
       } catch (error) {
         console.error(
           "YouTube search failed:",
@@ -273,6 +290,41 @@ function connect() {
           error.message
         );
       }
+
+      return;
+    }
+
+    /*
+     * !nowplaying command
+     */
+    if (
+      normalizedMessage === "!nowplaying"
+    ) {
+      if (!nowPlaying) {
+        socket.emit("sendChat", {
+          message:
+            "🎶 இப்போது எந்த பாடலும் தேர்வு செய்யப்படவில்லை."
+        });
+
+        return;
+      }
+
+      const nowPlayingMessage =
+        `🎶 𝑵𝒐𝒘 𝑷𝒍𝒂𝒚𝒊𝒏𝒈 🎶\n` +
+        `🎵 ${nowPlaying.title}\n` +
+        `🎤 ${nowPlaying.channel}\n` +
+        `🔗 ${nowPlaying.url}`;
+
+      console.log(
+        "Sending now playing:",
+        nowPlayingMessage
+      );
+
+      socket.emit("sendChat", {
+        message: nowPlayingMessage
+      });
+
+      return;
     }
   });
 
@@ -285,24 +337,17 @@ function connect() {
     }
 
     const welcomeMessage =
-  `🦋Welcome to 🎶 𝑺𝑲 𝑽𝑰𝑩𝑬𝒁 🎶 , ${participantName}!💥\n` +
-  `அன்புடன்! 𝙮𝙚𝙨𝙠𝙞𝙣𝙜 🦋`;
+      `🦋Welcome to 🎶 𝑺𝑲 𝑽𝑰𝑩𝑬𝒁 🎶 , ${participantName}!💥\n` +
+      `அன்புடன்! 𝙮𝙚𝙨𝙠𝙞𝙣𝙜 🦋`;
 
     console.log(
       "Sending welcome message:",
       welcomeMessage
     );
 
-    /*
-     * Current outgoing chat payload.
-     *
-     * We are keeping this unchanged for now.
-     * The next step will be testing whether Groic
-     * actually accepts this payload.
-     */
     socket.emit("sendChat", {
-  message: welcomeMessage
-});
+      message: welcomeMessage
+    });
 
     console.log(
       "Welcome message emit completed."

@@ -8,8 +8,16 @@ let socket = null;
 let currentRoomUid = null;
 let reconnectTimer = null;
 
+// Track participants already seen
+let knownParticipants = new Set();
+let presenceInitialized = false;
+
 function connectSocket(roomUid) {
   currentRoomUid = roomUid;
+
+  // Reset participant tracking on a fresh connection
+  knownParticipants = new Set();
+  presenceInitialized = false;
 
   connect();
 
@@ -62,6 +70,10 @@ function connect() {
     console.log("Groic Socket connected.");
     console.log("Socket ID:", socket.id);
 
+    // Reset presence tracking after reconnect
+    knownParticipants = new Set();
+    presenceInitialized = false;
+
     if (currentRoomUid) {
       socket.emit("joinRoom", {
         roomUid: currentRoomUid,
@@ -101,12 +113,91 @@ function connect() {
     );
   });
 
+  // ==============================
+  // WELCOME MESSAGE
+  // ==============================
+
   socket.on("presenceUpdate", (data) => {
     console.log(
       "Presence update:",
       JSON.stringify(data)
     );
+
+    const activeUsers =
+      data?.activeUsers ||
+      data?.[0]?.activeUsers ||
+      [];
+
+    if (!Array.isArray(activeUsers)) {
+      return;
+    }
+
+    const currentParticipants = new Set();
+
+    for (const user of activeUsers) {
+      const username = String(
+        user?.username || ""
+      ).toLowerCase();
+
+      const name =
+        user?.name ||
+        user?.username ||
+        "";
+
+      if (!username) {
+        continue;
+      }
+
+      currentParticipants.add(username);
+
+      // Never welcome the bot itself
+      if (username === "skvibez") {
+        continue;
+      }
+
+      // First presence update only establishes
+      // who is already inside the room.
+      if (!presenceInitialized) {
+        continue;
+      }
+
+      // New participant detected
+      if (!knownParticipants.has(username)) {
+        const welcomeMessage =
+          `👋 Welcome, ${name} to 𝑺𝑲 𝑽𝑰𝑩𝑬𝒁 ⚡️ 𝒀𝑬𝑺𝑲𝑰𝑵𝑮\n` +
+          `SKVIBEZ Music க்கு வரவேற்கிறோம்😍`;
+
+        console.log(
+          "New participant:",
+          name
+        );
+
+        console.log(
+          "Sending welcome message:",
+          welcomeMessage
+        );
+
+        socket.emit("chat", {
+          message: welcomeMessage
+        });
+      }
+    }
+
+    knownParticipants = currentParticipants;
+
+    // First presence update completed
+    if (!presenceInitialized) {
+      presenceInitialized = true;
+
+      console.log(
+        "Initial participant list initialized."
+      );
+    }
   });
+
+  // ==============================
+  // CHAT / YOUTUBE
+  // ==============================
 
   socket.on("chat", async (data) => {
     console.log(
@@ -147,6 +238,10 @@ function connect() {
       );
     }
   });
+
+  // ==============================
+  // ALL SOCKET EVENTS
+  // ==============================
 
   socket.onAny((event, ...args) => {
     console.log("Socket Event:", event);

@@ -852,19 +852,13 @@ function sendWelcomeMessage(
     socket.emit(
       "sendChat",
       {
-        message: welcomeMessage,
-
-        /*
-         * Colour test.
-         * Groic may ignore unsupported fields.
-         */
-        backgroundColor: "#7928CA",
-        color: "#FFFFFF"
+        message:
+          welcomeMessage
       }
     );
 
     console.log(
-      "Welcome message sent with colour test."
+      "Welcome message sent."
     );
   }
 }

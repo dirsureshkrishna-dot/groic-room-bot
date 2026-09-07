@@ -837,8 +837,8 @@ function sendWelcomeMessage(
   );
 
   const welcomeMessage =
-    `🦋Welcome to 🎶 𝑺𝑲 𝑽𝑰𝑩𝑬𝒁 🎶 , ${participantName}!💥\n` +
-    `அன்புடன்! 𝙮𝙚𝙨𝙠𝙞𝙣𝙜 🦋`;
+  `🦋 Welcome to 🎶 𝑺𝑲 𝑽𝑰𝑩𝑬𝒁 🎶, ${participantName}! 💥\n` +
+  `🎧 இசையோடு இணைவோம்! 𝙮𝙚𝙨𝙠𝙞𝙣𝙜 🦋`;
 
   console.log(
     "Sending welcome message:",

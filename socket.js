@@ -15,11 +15,9 @@ let currentRoomUid = null;
 
 let keepAliveInterval = null;
 let connectionWatchdog = null;
-let roomRejoinWatchdog = null;
 
 let recoveryTimer = null;
 let recoveryInProgress = false;
-let roomJoinInProgress = false;
 
 let activeParticipants = new Set();
 
@@ -33,7 +31,6 @@ const welcomeCooldown = new Map();
  */
 let lastConnectedAt = 0;
 let lastPresenceAt = 0;
-let lastRoomJoinAt = 0;
 
 
 /*
@@ -49,8 +46,7 @@ function connectSocket(roomUid) {
   }
 
   /*
-   * Reset room state only when
-   * changing to another room.
+   * Reset presence only when changing rooms.
    */
   if (currentRoomUid !== roomUid) {
     activeParticipants = new Set();
@@ -60,53 +56,59 @@ function connectSocket(roomUid) {
   currentRoomUid = roomUid;
 
   /*
-   * Existing healthy socket.
+   * Existing healthy socket:
+   * DO NOT create another socket.
    */
   if (
     socket &&
     socket.connected
   ) {
     console.log(
-      "[Socket] Already connected."
+      "Socket is already connected."
     );
-
-    ensureRoomJoined();
 
     startKeepAlive();
     startConnectionWatchdog();
-    startRoomRejoinWatchdog();
 
     return socket;
   }
 
   /*
-   * Existing Socket.IO socket.
-   * Reuse the SAME socket.
+   * Existing Socket.IO socket that is
+   * disconnected but still usable.
+   *
+   * Recover the SAME socket.
    */
-  if (socket) {
+  if (
+    socket &&
+    !socket.connected &&
+    socket.active === false
+  ) {
     console.log(
-      "[Socket] Existing socket found."
+      "Existing Socket.IO socket found."
     );
 
-    if (!socket.connected) {
-      scheduleSameSocketRecovery();
-    }
+    console.log(
+      "Recovering existing Socket.IO socket..."
+    );
+
+    recoverSameSocket();
 
     startKeepAlive();
     startConnectionWatchdog();
-    startRoomRejoinWatchdog();
 
     return socket;
   }
 
   /*
-   * Create socket only once.
+   * First connection only.
    */
-  createSocket();
+  if (!socket) {
+    createSocket();
+  }
 
   startKeepAlive();
   startConnectionWatchdog();
-  startRoomRejoinWatchdog();
 
   return socket;
 }
@@ -127,7 +129,7 @@ function createSocket() {
   }
 
   console.log(
-    "[Socket] Creating SKVIBEZ Socket.IO instance..."
+    "Creating SKVIBEZ Socket.IO instance..."
   );
 
   socket = io(SOCKET_URL, {
@@ -146,13 +148,12 @@ function createSocket() {
     },
 
     /*
-     * Automatic Socket.IO reconnect.
+     * Socket.IO automatic reconnect.
      */
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 3000,
-    reconnectionDelayMax: 15000,
-    randomizationFactor: 0.5,
+    reconnectionDelayMax: 10000,
 
     timeout: 30000,
 
@@ -164,7 +165,7 @@ function createSocket() {
   });
 
   console.log(
-    "[Socket] SKVIBEZ Socket.IO instance created."
+    "SKVIBEZ Socket.IO instance created."
   );
 
 
@@ -173,12 +174,11 @@ function createSocket() {
    * MANAGER EVENTS
    * ======================================
    */
-
   socket.io.on(
     "reconnect_attempt",
     (attempt) => {
       console.log(
-        "[Reconnect] Attempt:",
+        "Socket.IO reconnect attempt:",
         attempt
       );
     }
@@ -188,22 +188,8 @@ function createSocket() {
     "reconnect",
     (attempt) => {
       console.log(
-        "[Reconnect] Successfully reconnected after:",
-        attempt,
-        "attempt(s)"
-      );
-
-      recoveryInProgress = false;
-
-      /*
-       * connect event normally performs
-       * the actual room join.
-       */
-      setTimeout(
-        () => {
-          ensureRoomJoined();
-        },
-        1000
+        "Socket.IO reconnected after attempts:",
+        attempt
       );
     }
   );
@@ -212,9 +198,8 @@ function createSocket() {
     "reconnect_error",
     (error) => {
       console.error(
-        "[Reconnect] Error:",
-        error?.message ||
-        error
+        "Socket.IO reconnect error:",
+        error.message
       );
     }
   );
@@ -223,15 +208,8 @@ function createSocket() {
     "reconnect_failed",
     () => {
       console.error(
-        "[Reconnect] Failed."
+        "Socket.IO reconnect failed."
       );
-
-      /*
-       * Do not create another socket.
-       * Watchdog will continue monitoring
-       * the existing socket.
-       */
-      scheduleSameSocketRecovery();
     }
   );
 
@@ -245,14 +223,11 @@ function createSocket() {
     "connect",
     () => {
       lastConnectedAt = Date.now();
+
       recoveryInProgress = false;
 
       console.log(
-        "========================================"
-      );
-
-      console.log(
-        "GROIC SKVIBEZ CONNECTED"
+        "Groic Socket connected."
       );
 
       console.log(
@@ -261,25 +236,41 @@ function createSocket() {
       );
 
       console.log(
-        "Transport:",
-        socket.io?.engine?.transport?.name
+        "Socket.IO Manager active:",
+        socket.active
+      );
+
+      if (!currentRoomUid) {
+        console.log(
+          "Room UID is missing."
+        );
+
+        return;
+      }
+
+      /*
+       * Rejoin the SAME room after
+       * reconnect.
+       */
+      socket.emit(
+        "joinRoom",
+        {
+          roomUid: currentRoomUid,
+          name: "SKVIBEZ",
+          imageUrl:
+            process.env.BOT_IMAGE_URL || "",
+          isBot: false
+        }
       );
 
       console.log(
-        "Socket active:",
-        socket.active
+        "Join room request sent."
       );
 
       console.log(
         "Room UID:",
         currentRoomUid
       );
-
-      console.log(
-        "========================================"
-      );
-
-      ensureRoomJoined();
     }
   );
 
@@ -293,54 +284,61 @@ function createSocket() {
     "disconnect",
     (reason) => {
       console.log(
-        "[Socket] Disconnected:",
+        "Socket disconnected:",
         reason
       );
 
       console.log(
-        "[Socket] active:",
-        socket?.active
+        "Socket active:",
+        socket.active
       );
 
       console.log(
-        "[Socket] connected:",
-        socket?.connected
+        "Socket connected:",
+        socket.connected
+      );
+
+      console.log(
+        "Socket ID at disconnect:",
+        socket.id
       );
 
       /*
-       * Normal transport/network disconnect.
+       * Transport close.
        *
-       * Socket.IO should automatically
-       * reconnect.
+       * Socket.IO normally handles
+       * automatic reconnect.
        */
       if (
         reason ===
         "transport close"
       ) {
         console.log(
-          "[Recovery] Transport closed."
+          "Transport closed."
         );
 
         console.log(
-          "[Recovery] Waiting for Socket.IO automatic reconnect..."
+          "Keeping the same Socket.IO instance."
         );
 
         return;
       }
 
       /*
-       * Server-side disconnect.
+       * Server explicitly closed socket.
        *
-       * Socket.IO automatic reconnect is not
-       * always triggered for io server disconnect,
-       * so explicitly recover the SAME socket.
+       * Recover SAME socket.
        */
       if (
         reason ===
         "io server disconnect"
       ) {
         console.log(
-          "[Recovery] Groic server disconnected SKVIBEZ."
+          "Groic server disconnected SKVIBEZ."
+        );
+
+        console.log(
+          "Recovering using the SAME Socket.IO socket."
         );
 
         scheduleSameSocketRecovery();
@@ -349,22 +347,11 @@ function createSocket() {
       }
 
       /*
-       * Other disconnect reasons.
+       * Any other disconnect reason.
        */
       console.log(
-        "[Recovery] Unexpected disconnect."
+        "Unexpected socket disconnect."
       );
-
-      /*
-       * If Socket.IO is not already active,
-       * request same-socket recovery.
-       */
-      if (
-        socket &&
-        !socket.active
-      ) {
-        scheduleSameSocketRecovery();
-      }
     }
   );
 
@@ -378,56 +365,43 @@ function createSocket() {
     "connect_error",
     (error) => {
       console.error(
-        "[Socket] Connection error:"
+        "Socket connection error:"
       );
 
       console.error(
         "Message:",
-        error?.message
+        error.message
       );
 
       console.error(
         "Description:",
-        error?.description
+        error.description
       );
 
       console.error(
         "Type:",
-        error?.type
+        error.type
       );
 
-      if (error?.data) {
+      if (error.data) {
         console.error(
           "Error data:",
           JSON.stringify(error.data)
         );
       }
 
-      const errorMessage =
-        String(
-          error?.message || ""
-        ).toLowerCase();
-
+      /*
+       * Authentication/session error.
+       */
       if (
-        errorMessage.includes(
-          "unauthorized"
-        ) ||
-        errorMessage.includes(
-          "authentication"
-        ) ||
-        errorMessage.includes(
-          "token"
-        )
+        String(error.message || "")
+          .toLowerCase()
+          .includes("unauthorized")
       ) {
         console.log(
-          "[Auth] Authentication-related connection error detected."
+          "Authorization error detected."
         );
 
-        /*
-         * Do not create a new socket.
-         * Token refresh will update the
-         * existing socket configuration.
-         */
         scheduleSameSocketRecovery();
       }
     }
@@ -445,11 +419,7 @@ function createSocket() {
       lastPresenceAt = Date.now();
 
       console.log(
-        "[Presence] Update received."
-      );
-
-      console.log(
-        "[Presence] Data:",
+        "Presence update:",
         JSON.stringify(data)
       );
 
@@ -481,14 +451,38 @@ function createSocket() {
           username.toLowerCase();
 
         /*
-         * Never welcome SKVIBEZ itself.
+         * ==================================
+         * NEVER WELCOME THESE BOTS
+         * ==================================
+         *
+         * SKVIBEZ
+         * GROIC_EXPLORE
+         * GROIC_AI
+         * GROIC_MUSIC
+         */
+        const protectedBots = new Set([
+          "skvibez",
+          "groic_explore",
+          "groicai",
+          "groic_music"
+        ]);
+
+        /*
+         * Keep them in participant tracking,
+         * but NEVER send a welcome message.
          */
         if (
-          normalizedUsername ===
-          "skvibez"
+          protectedBots.has(
+            normalizedUsername
+          )
         ) {
           currentParticipants.add(
             normalizedUsername
+          );
+
+          console.log(
+            "Welcome skipped (protected bot):",
+            participantName
           );
 
           continue;
@@ -499,7 +493,7 @@ function createSocket() {
         );
 
         /*
-         * New participant.
+         * New normal participant.
          */
         if (
           !activeParticipants.has(
@@ -528,7 +522,7 @@ function createSocket() {
     "chat",
     async (data) => {
       console.log(
-        "[Chat]",
+        "Chat message:",
         JSON.stringify(data)
       );
 
@@ -545,7 +539,6 @@ function createSocket() {
         message
           .toLowerCase()
           .trim();
-
 
       /*
        * ====================================
@@ -568,7 +561,7 @@ function createSocket() {
 
         try {
           console.log(
-            "[Music] YouTube search:",
+            "YouTube search:",
             query
           );
 
@@ -582,23 +575,19 @@ function createSocket() {
             results.length > 0
           ) {
             console.log(
-              "[Music] YouTube result:",
+              "YouTube result found:",
               results[0].title
             );
 
             /*
              * Groic handles playback.
-             *
-             * No unverified playback event
-             * is emitted here.
              */
           }
         } catch (error) {
           console.error(
-            "[Music] YouTube search failed:",
-            error?.response?.data ||
-            error?.message ||
-            error
+            "YouTube search failed:",
+            error.response?.data ||
+            error.message
           );
         }
 
@@ -610,30 +599,21 @@ function createSocket() {
 
   /*
    * ======================================
-   * ALL SOCKET EVENTS
+   * SOCKET EVENTS
    * ======================================
-   *
-   * Useful for discovering new Groic
-   * events without changing existing logic.
    */
   socket.onAny(
     (event, ...args) => {
       console.log(
-        "[Socket Event]",
+        "Socket Event:",
         event
       );
 
       if (args.length > 0) {
-        try {
-          console.log(
-            "[Socket Data]",
-            JSON.stringify(args)
-          );
-        } catch {
-          console.log(
-            "[Socket Data] Unable to stringify."
-          );
-        }
+        console.log(
+          "Socket Data:",
+          JSON.stringify(args)
+        );
       }
     }
   );
@@ -650,109 +630,13 @@ function createSocket() {
 
 /*
  * ========================================
- * ENSURE ROOM JOINED
- * ========================================
- *
- * Sends joinRoom only when connected.
- *
- * Duplicate join requests are prevented
- * for a short period.
- */
-function ensureRoomJoined() {
-  if (
-    !socket ||
-    !socket.connected
-  ) {
-    return;
-  }
-
-  if (!currentRoomUid) {
-    console.log(
-      "[Room] Room UID is missing."
-    );
-
-    return;
-  }
-
-  if (roomJoinInProgress) {
-    console.log(
-      "[Room] Join already in progress."
-    );
-
-    return;
-  }
-
-  const now = Date.now();
-
-  /*
-   * Avoid repeatedly sending joinRoom
-   * every second.
-   */
-  if (
-    lastRoomJoinAt &&
-    now - lastRoomJoinAt < 5000
-  ) {
-    return;
-  }
-
-  roomJoinInProgress = true;
-  lastRoomJoinAt = now;
-
-  console.log(
-    "[Room] Joining room:",
-    currentRoomUid
-  );
-
-  try {
-    socket.emit(
-      "joinRoom",
-      {
-        roomUid:
-          currentRoomUid,
-
-        name:
-          "SKVIBEZ",
-
-        imageUrl:
-          process.env.BOT_IMAGE_URL || "",
-
-        isBot: false
-      }
-    );
-
-    console.log(
-      "[Room] joinRoom request sent."
-    );
-  } catch (error) {
-    console.error(
-      "[Room] joinRoom failed:",
-      error?.message ||
-      error
-    );
-  }
-
-  /*
-   * This is only a local protection flag.
-   * It is cleared shortly after the request.
-   */
-  setTimeout(
-    () => {
-      roomJoinInProgress = false;
-    },
-    2000
-  );
-}
-
-
-/*
- * ========================================
  * SAME SOCKET RECOVERY
  * ========================================
  */
 function recoverSameSocket() {
   if (!socket) {
     console.log(
-      "[Recovery] No existing socket."
+      "No existing socket available."
     );
 
     return;
@@ -760,19 +644,15 @@ function recoverSameSocket() {
 
   if (socket.connected) {
     console.log(
-      "[Recovery] Socket already connected."
+      "Socket already connected."
     );
-
-    ensureRoomJoined();
-
-    recoveryInProgress = false;
 
     return;
   }
 
   if (recoveryInProgress) {
     console.log(
-      "[Recovery] Already in progress."
+      "Socket recovery already in progress."
     );
 
     return;
@@ -781,30 +661,29 @@ function recoverSameSocket() {
   recoveryInProgress = true;
 
   console.log(
-    "[Recovery] Recovering SAME Socket.IO instance..."
+    "Recovering existing Socket.IO socket..."
   );
 
   try {
     /*
      * IMPORTANT:
      *
-     * Reuse the SAME socket.
+     * Reconnect the SAME socket.
      *
-     * Never call io() again here.
+     * Do NOT call io() again.
      */
     socket.connect();
 
     console.log(
-      "[Recovery] socket.connect() requested."
+      "Same Socket.IO socket reconnect requested."
     );
 
   } catch (error) {
     recoveryInProgress = false;
 
     console.error(
-      "[Recovery] Same socket recovery failed:",
-      error?.message ||
-      error
+      "Same socket recovery failed:",
+      error.message
     );
 
     scheduleSameSocketRecovery();
@@ -829,7 +708,7 @@ function scheduleSameSocketRecovery() {
 
         if (!socket) {
           console.log(
-            "[Recovery] Socket does not exist."
+            "Socket does not exist."
           );
 
           return;
@@ -837,12 +716,10 @@ function scheduleSameSocketRecovery() {
 
         if (socket.connected) {
           console.log(
-            "[Recovery] Socket already recovered."
+            "Socket already recovered."
           );
 
           recoveryInProgress = false;
-
-          ensureRoomJoined();
 
           return;
         }
@@ -872,7 +749,7 @@ function attachEngineDiagnostics() {
     socket.io.engine;
 
   /*
-   * Prevent duplicate diagnostics.
+   * Avoid duplicate listeners.
    */
   if (
     engine.__skvibezDiagnosticsAttached
@@ -884,21 +761,16 @@ function attachEngineDiagnostics() {
     true;
 
   console.log(
-    "[Engine] Diagnostics enabled."
+    "Groic Engine diagnostics enabled."
   );
 
   engine.on(
     "close",
     (reason) => {
       console.log(
-        "[Engine] Closed:",
+        "Groic Engine closed:",
         reason
       );
-
-      /*
-       * Socket.IO will normally reconnect.
-       * Watchdogs also continue monitoring.
-       */
     }
   );
 
@@ -906,7 +778,7 @@ function attachEngineDiagnostics() {
     "error",
     (error) => {
       console.error(
-        "[Engine] Error:",
+        "Groic Engine error:",
         error?.message ||
         error
       );
@@ -935,12 +807,29 @@ function sendWelcomeMessage(
     username.toLowerCase();
 
   /*
-   * Never welcome SKVIBEZ.
+   * ==================================
+   * PROTECTED ACCOUNTS
+   * ==================================
+   *
+   * SKVIBEZ itself + the other 3 bots.
    */
+  const protectedBots = new Set([
+    "skvibez",
+    "groic_explore",
+    "groicai",
+    "groic_music"
+  ]);
+
   if (
-    normalizedUsername ===
-    "skvibez"
+    protectedBots.has(
+      normalizedUsername
+    )
   ) {
+    console.log(
+      "Welcome skipped (protected account):",
+      participantName
+    );
+
     return;
   }
 
@@ -1002,16 +891,21 @@ function sendWelcomeMessage(
  * ========================================
  * TOKEN REFRESH
  * ========================================
+ *
+ * IMPORTANT:
+ *
+ * NEVER intentionally disconnect the
+ * existing socket here.
  */
 onTokenRefresh(
   async (newToken) => {
     console.log(
-      "[Auth] New SKVIBEZ token received."
+      "New SKVIBEZ token received."
     );
 
     if (!newToken) {
       console.log(
-        "[Auth] Empty token received."
+        "Empty token received."
       );
 
       return;
@@ -1019,14 +913,14 @@ onTokenRefresh(
 
     if (!socket) {
       console.log(
-        "[Auth] Socket does not exist yet."
+        "Socket does not exist yet."
       );
 
       return;
     }
 
     /*
-     * Update Socket.IO auth.
+     * Update current Socket.IO authentication.
      */
     socket.auth = {
       Authorization:
@@ -1038,7 +932,7 @@ onTokenRefresh(
       socket.io.opts
     ) {
       /*
-       * Update extra headers.
+       * Update extraHeaders.
        */
       if (
         socket.io.opts.extraHeaders
@@ -1050,7 +944,7 @@ onTokenRefresh(
       }
 
       /*
-       * Update auth options.
+       * Update Manager auth.
        */
       if (
         socket.io.opts.auth
@@ -1062,17 +956,16 @@ onTokenRefresh(
     }
 
     console.log(
-      "[Auth] Socket authentication updated."
+      "Groic Socket authentication updated."
     );
 
     /*
      * IMPORTANT:
      *
-     * We intentionally do NOT call
-     * disconnect() here.
+     * No disconnect().
+     * No connect().
      *
-     * We also do NOT create another
-     * Socket.IO instance.
+     * Current connection remains untouched.
      */
   }
 );
@@ -1099,31 +992,23 @@ function startKeepAlive() {
           currentRoomUid
         ) {
           console.log(
-            "[KeepAlive] Sending room sync..."
+            "Sending Groic room sync..."
           );
 
-          try {
-            socket.emit(
-              "requestSync",
-              {
-                roomUid:
-                  currentRoomUid
-              }
-            );
-          } catch (error) {
-            console.error(
-              "[KeepAlive] Failed:",
-              error?.message ||
-              error
-            );
-          }
+          socket.emit(
+            "requestSync",
+            {
+              roomUid:
+                currentRoomUid
+            }
+          );
         }
       },
       10000
     );
 
   console.log(
-    "[KeepAlive] 10-second room sync enabled."
+    "Groic 10-second keep-alive enabled."
   );
 }
 
@@ -1132,8 +1017,6 @@ function startKeepAlive() {
  * ========================================
  * CONNECTION WATCHDOG
  * ========================================
- *
- * Checks every 15 seconds.
  */
 function startConnectionWatchdog() {
   if (connectionWatchdog) {
@@ -1151,14 +1034,14 @@ function startConnectionWatchdog() {
 
         if (socket.connected) {
           console.log(
-            "[Watchdog] Socket connected."
+            "[Watchdog] Socket is connected."
           );
 
           return;
         }
 
         console.log(
-          "[Watchdog] Socket disconnected."
+          "[Watchdog] Socket is disconnected."
         );
 
         console.log(
@@ -1167,7 +1050,8 @@ function startConnectionWatchdog() {
         );
 
         /*
-         * Socket.IO is already reconnecting.
+         * Socket.IO is already attempting
+         * reconnection.
          */
         if (socket.active) {
           console.log(
@@ -1179,7 +1063,7 @@ function startConnectionWatchdog() {
 
         /*
          * Manager is inactive.
-         * Recover the SAME socket.
+         * Recover SAME socket.
          */
         console.log(
           "[Watchdog] Starting same-socket recovery..."
@@ -1192,90 +1076,7 @@ function startConnectionWatchdog() {
     );
 
   console.log(
-    "[Watchdog] SKVIBEZ connection watchdog enabled."
-  );
-}
-
-
-/*
- * ========================================
- * ROOM REJOIN WATCHDOG
- * ========================================
- *
- * Makes sure a connected socket continues
- * trying to establish the room membership.
- *
- * This does NOT create a new socket.
- */
-function startRoomRejoinWatchdog() {
-  if (roomRejoinWatchdog) {
-    clearInterval(
-      roomRejoinWatchdog
-    );
-  }
-
-  roomRejoinWatchdog =
-    setInterval(
-      () => {
-        if (
-          !socket ||
-          !socket.connected ||
-          !currentRoomUid
-        ) {
-          return;
-        }
-
-        /*
-         * If presence has not been received
-         * for a long time, send a controlled
-         * room join request.
-         */
-        const now = Date.now();
-
-        const connectedFor =
-          lastConnectedAt
-            ? now - lastConnectedAt
-            : 0;
-
-        const presenceAge =
-          lastPresenceAt
-            ? now - lastPresenceAt
-            : 0;
-
-        /*
-         * Give the server some time after
-         * initial connection before checking.
-         */
-        if (
-          connectedFor < 30000
-        ) {
-          return;
-        }
-
-        /*
-         * If no presence event has been seen
-         * for 60 seconds, ensure room join.
-         */
-        if (
-          !lastPresenceAt ||
-          presenceAge > 60000
-        ) {
-          console.log(
-            "[RoomWatchdog] Room presence is stale."
-          );
-
-          console.log(
-            "[RoomWatchdog] Ensuring room join..."
-          );
-
-          ensureRoomJoined();
-        }
-      },
-      30000
-    );
-
-  console.log(
-    "[RoomWatchdog] Room rejoin watchdog enabled."
+    "SKVIBEZ connection watchdog enabled."
   );
 }
 

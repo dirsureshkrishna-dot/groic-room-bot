@@ -13,12 +13,11 @@ const {
   handleMessage,
   startIdleBehavior,
   stopIdleBehavior
-} = require("./humanBehavior");
+} = require("./core/humanBehavior");
 
 const {
   generateReply
-} = require("./chatBehavior");
-
+} = require("./core/chatBehavior");
 
 const SOCKET_URL =
   "https://socket-v2.groic.in";

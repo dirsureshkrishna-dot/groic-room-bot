@@ -1,106 +1,135 @@
 "use strict";
 
 /*
+ * ========================================
  * SK VIBEZ
- * Human Behavior Layer
+ * HUMAN CHAT BEHAVIOR
+ * ========================================
  *
- * Responsibilities:
- * - Observe incoming room chat
- * - Reply when SK VIBEZ is mentioned
- * - Natural casual room participation
- * - Pure clear Tanglish conversation
- * - Avoid bot-to-bot conversations
- * - Avoid duplicate incoming events
- * - Avoid overlapping replies
- * - Natural reply delay
- * - Occasional idle conversation
- * - Detailed send diagnostics
+ * Purpose:
+ *
+ * - Watch incoming room messages
+ * - Detect direct SK VIBEZ mentions
+ * - Sometimes join casual conversations
+ * - Keep natural time gaps
+ * - Prevent duplicate replies
+ * - Use Groq AI for contextual replies
+ * - Support idle room conversation
+ *
+ * This file does NOT create a socket.
+ * The socket is provided by socket.js.
  */
-
-const MIN_REPLY_DELAY = 1000;
-const MAX_REPLY_DELAY = 4000;
 
 
 /*
- * Idle behavior
+ * ========================================
+ * CONFIG
+ * ========================================
  */
-const MIN_IDLE_INTERVAL =
-  4 * 60 * 1000;
 
-const MAX_IDLE_INTERVAL =
-  9 * 60 * 1000;
+const MIN_REPLY_DELAY =
+  1500;
 
-const IDLE_MESSAGE_CHANCE =
-  0.18;
+const MAX_REPLY_DELAY =
+  4500;
 
 
 /*
- * Incoming message deduplication
+ * Minimum time between SK VIBEZ
+ * replies.
+ *
+ * This prevents rapid replies.
  */
-const MESSAGE_DEDUPE_WINDOW =
+
+const MIN_REPLY_GAP =
   15000;
 
 
 /*
- * State
+ * Casual participation probability.
+ *
+ * SK VIBEZ will not answer every
+ * room message.
  */
-let replyInProgress = false;
 
-let lastReply = "";
+const CASUAL_REPLY_CHANCE =
+  0.08;
+
+
+/*
+ * Incoming duplicate window.
+ */
+
+const INCOMING_DEDUPE_WINDOW =
+  15000;
+
+
+/*
+ * Idle behavior.
+ */
+
+const IDLE_MIN_QUIET_MS =
+  4 * 60 * 1000;
+
+const IDLE_MAX_CHECK_MS =
+  9 * 60 * 1000;
+
+const IDLE_REPLY_CHANCE =
+  0.18;
+
+
+/*
+ * ========================================
+ * INTERNAL STATE
+ * ========================================
+ */
+
+let replyInProgress =
+  false;
+
+let lastReplyAt =
+  0;
 
 let lastActivityAt =
   Date.now();
 
-let lastIdleMessageAt = 0;
+let lastIdleMessageAt =
+  0;
 
-let idleTimer = null;
+let idleTimer =
+  null;
 
-let idleStarted = false;
+let idleStarted =
+  false;
 
 
 /*
- * Recent incoming messages
+ * Recent incoming messages.
+ *
+ * Key:
+ * username + message
  */
+
 const recentMessages =
   new Map();
 
 
 /*
  * ========================================
- * UTILITY
+ * TEXT CLEANING
  * ========================================
  */
 
-function sleep(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-
-function randomInt(min, max) {
-  return Math.floor(
-    Math.random() *
-      (max - min + 1)
-  ) + min;
-}
-
-
-function randomDelay() {
-  return randomInt(
-    MIN_REPLY_DELAY,
-    MAX_REPLY_DELAY
-  );
-}
-
-
 function cleanText(value) {
+
   if (
     value === null ||
     value === undefined
   ) {
+
     return "";
   }
+
 
   return String(value)
     .replace(/\s+/g, " ")
@@ -108,82 +137,135 @@ function cleanText(value) {
 }
 
 
-function normalizeUsername(value) {
-  return cleanText(value)
-    .replace(/^@+/, "")
-    .toLowerCase();
-}
-
-
 /*
  * ========================================
- * MESSAGE EXTRACTION
+ * EXTRACT MESSAGE TEXT
  * ========================================
  */
 
 function getMessageText(message) {
+
   if (
     typeof message === "string"
   ) {
-    return cleanText(message);
+
+    return cleanText(
+      message
+    );
   }
+
 
   if (
     !message ||
     typeof message !== "object"
   ) {
+
     return "";
   }
 
-  return cleanText(
-    message.message ??
-    message.text ??
-    message.content ??
-    message.chatMessage ??
-    message.body ??
-    ""
-  );
+
+  const possibleValues = [
+
+    message.message,
+
+    message.text,
+
+    message.content,
+
+    message.chatMessage,
+
+    message.body
+  ];
+
+
+  for (
+    const value of possibleValues
+  ) {
+
+    if (
+      typeof value === "string" &&
+      value.trim()
+    ) {
+
+      return cleanText(
+        value
+      );
+    }
+  }
+
+
+  return "";
 }
 
 
 /*
  * ========================================
- * SENDER EXTRACTION
+ * EXTRACT SENDER USERNAME
  * ========================================
  */
 
 function getSenderUsername(message) {
+
   if (
     !message ||
     typeof message !== "object"
   ) {
+
     return "";
   }
 
+
   const sender =
-    message.user ??
-    message.sender ??
-    message.author ??
-    message.profile ??
+    message.user ||
+    message.sender ||
+    message.author ||
+    message.profile ||
     {};
+
 
   if (
     typeof sender === "string"
   ) {
-    return normalizeUsername(
+
+    return cleanText(
       sender
     );
   }
 
-  return normalizeUsername(
-    sender.username ??
-    sender.userName ??
-    sender.name ??
-    message.username ??
-    message.userName ??
-    message.senderUsername ??
-    ""
-  );
+
+  const possibleNames = [
+
+    sender.username,
+
+    sender.userName,
+
+    sender.name,
+
+    message.username,
+
+    message.userName,
+
+    message.senderUsername
+  ];
+
+
+  for (
+    const value of possibleNames
+  ) {
+
+    if (
+      typeof value === "string" &&
+      value.trim()
+    ) {
+
+      return cleanText(
+        value
+      );
+    }
+  }
+
+
+  return "";
 }
 
 
@@ -194,128 +276,51 @@ function getSenderUsername(message) {
  */
 
 function isBotMessage(message) {
+
   if (
     !message ||
     typeof message !== "object"
   ) {
+
     return false;
   }
+
+
+  /*
+   * Top-level bot flags.
+   */
 
   if (
     message.isBot === true ||
     message.bot === true ||
     message.fromBot === true
   ) {
+
     return true;
   }
+
+
+  /*
+   * Nested sender.
+   */
 
   const sender =
-    message.user ??
-    message.sender ??
-    message.author ??
-    message.profile ??
+    message.user ||
+    message.sender ||
+    message.author ||
+    message.profile ||
     {};
 
-  if (
-    sender &&
-    typeof sender === "object"
-  ) {
-    if (
-      sender.isBot === true ||
-      sender.bot === true ||
-      sender.fromBot === true
-    ) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-
-/*
- * ========================================
- * MESSAGE FINGERPRINT
- * ========================================
- */
-
-function createMessageFingerprint(
-  message
-) {
-  const username =
-    getSenderUsername(message);
-
-  const text =
-    getMessageText(message)
-      .toLowerCase();
-
-  return `${username}|${text}`;
-}
-
-
-function cleanupRecentMessages() {
-  const now =
-    Date.now();
-
-  for (
-    const [
-      fingerprint,
-      timestamp
-    ] of recentMessages.entries()
-  ) {
-    if (
-      now - timestamp >
-      MESSAGE_DEDUPE_WINDOW
-    ) {
-      recentMessages.delete(
-        fingerprint
-      );
-    }
-  }
-}
-
-
-function isDuplicateIncomingMessage(
-  message
-) {
-  const text =
-    getMessageText(message);
-
-  if (!text) {
-    return false;
-  }
-
-  cleanupRecentMessages();
-
-  const fingerprint =
-    createMessageFingerprint(
-      message
-    );
-
-  const now =
-    Date.now();
-
-  const previous =
-    recentMessages.get(
-      fingerprint
-    );
 
   if (
-    previous &&
-    now - previous <
-      MESSAGE_DEDUPE_WINDOW
+    sender.isBot === true ||
+    sender.bot === true ||
+    sender.fromBot === true
   ) {
-    console.log(
-      "[HumanBehavior] Duplicate incoming message ignored."
-    );
 
     return true;
   }
 
-  recentMessages.set(
-    fingerprint,
-    now
-  );
 
   return false;
 }
@@ -323,56 +328,133 @@ function isDuplicateIncomingMessage(
 
 /*
  * ========================================
- * MENTION DETECTION
+ * NORMALIZE USERNAME
  * ========================================
  */
 
-function escapeRegExp(value) {
-  return value.replace(
-    /[.*+?^${}()|[\]\\]/g,
-    "\\$&"
-  );
+function normalizeUsername(value) {
+
+  return cleanText(
+    value
+  )
+    .toLowerCase()
+    .replace(/^@+/, "");
 }
 
 
-function isDirectMention(
-  message,
-  botName = "SK VIBEZ"
+/*
+ * ========================================
+ * NORMALIZE MESSAGE
+ * ========================================
+ */
+
+function normalizeMessage(value) {
+
+  return cleanText(
+    value
+  )
+    .toLowerCase();
+}
+
+
+/*
+ * ========================================
+ * IS SK VIBEZ
+ * ========================================
+ */
+
+function isOwnMessage(
+  username,
+  botUsername,
+  botName
 ) {
-  const text =
-    getMessageText(message);
 
-  if (!text) {
+  const user =
+    normalizeUsername(
+      username
+    );
+
+  const bot =
+    normalizeUsername(
+      botUsername
+    );
+
+  const name =
+    normalizeUsername(
+      botName
+    );
+
+
+  if (
+    user &&
+    bot &&
+    user === bot
+  ) {
+
+    return true;
+  }
+
+
+  if (
+    user &&
+    name &&
+    user === name
+  ) {
+
+    return true;
+  }
+
+
+  return false;
+}
+
+
+/*
+ * ========================================
+ * DIRECT MENTION DETECTION
+ * ========================================
+ */
+
+function isDirectMention(
+  text,
+  botUsername,
+  botName
+) {
+
+  const normalized =
+    normalizeMessage(
+      text
+    );
+
+
+  if (!normalized) {
     return false;
   }
 
-  const normalizedText =
-    text.toLowerCase();
 
-  const normalizedBotName =
-    normalizeUsername(botName);
+  const username =
+    normalizeUsername(
+      botUsername
+    );
 
-  if (!normalizedBotName) {
-    return false;
-  }
+
+  const name =
+    normalizeUsername(
+      botName
+    );
 
 
   /*
    * @skvibez
    */
-  const mentionPattern =
-    new RegExp(
-      `(^|\\s)@${escapeRegExp(
-        normalizedBotName
-      )}(?=\\s|$|[.,!?])`,
-      "i"
-    );
 
   if (
-    mentionPattern.test(
-      normalizedText
+    username &&
+    normalized.includes(
+      `@${username}`
     )
   ) {
+
     return true;
   }
 
@@ -380,313 +462,260 @@ function isDirectMention(
   /*
    * skvibez
    */
-  const plainPattern =
+
+  if (
+    username &&
+    containsWholeWord(
+      normalized,
+      username
+    )
+  ) {
+
+    return true;
+  }
+
+
+  /*
+   * sk vibez
+   */
+
+  if (
+    name &&
+    containsWholeWord(
+      normalized,
+      name
+    )
+  ) {
+
+    return true;
+  }
+
+
+  return false;
+}
+
+
+/*
+ * ========================================
+ * WHOLE WORD CHECK
+ * ========================================
+ */
+
+function containsWholeWord(
+  text,
+  word
+) {
+
+  if (
+    !text ||
+    !word
+  ) {
+
+    return false;
+  }
+
+
+  const escaped =
+    word.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&"
+    );
+
+
+  const regex =
     new RegExp(
-      `(^|\\s)${escapeRegExp(
-        normalizedBotName
-      )}(?=\\s|$|[.,!?])`,
+      `(^|[^a-z0-9_])${escaped}([^a-z0-9_]|$)`,
       "i"
     );
 
-  return plainPattern.test(
-    normalizedText
+
+  return regex.test(
+    text
   );
 }
 
 
 /*
  * ========================================
- * REPLY DECISION
+ * DUPLICATE INCOMING MESSAGE
  * ========================================
  */
 
-function shouldReplyToMessage(
-  message,
-  options = {}
+function isDuplicateIncoming(
+  username,
+  text
 ) {
-  const botName =
-    options.botName ||
-    "SK VIBEZ";
 
-  const botUsername =
-    options.botUsername ||
-    "skvibez";
-
-  const text =
-    getMessageText(message);
-
-  if (!text) {
-    return {
-      reply: false,
-      reason: "empty_message"
-    };
-  }
+  const key =
+    `${normalizeUsername(username)}|${normalizeMessage(text)}`;
 
 
-  const senderUsername =
-    getSenderUsername(message);
+  const now =
+    Date.now();
 
 
   /*
-   * Never reply to itself.
+   * Remove old entries.
    */
-  if (
-    senderUsername &&
-    (
-      senderUsername ===
-        normalizeUsername(botName) ||
-      senderUsername ===
-        normalizeUsername(botUsername)
-    )
+
+  for (
+    const [
+      oldKey,
+      timestamp
+    ] of recentMessages
   ) {
-    return {
-      reply: false,
-      reason: "own_message"
-    };
+
+    if (
+      now - timestamp >
+      INCOMING_DEDUPE_WINDOW
+    ) {
+
+      recentMessages.delete(
+        oldKey
+      );
+    }
   }
 
 
-  /*
-   * Never reply to another bot.
-   */
+  const previous =
+    recentMessages.get(
+      key
+    );
+
+
   if (
-    isBotMessage(message)
+    previous &&
+    now - previous <
+    INCOMING_DEDUPE_WINDOW
   ) {
-    return {
-      reply: false,
-      reason: "bot_message"
-    };
+
+    return true;
   }
 
 
+  recentMessages.set(
+    key,
+    now
+  );
+
+
+  return false;
+}
+
+
+/*
+ * ========================================
+ * RANDOM DELAY
+ * ========================================
+ */
+
+function randomBetween(
+  min,
+  max
+) {
+
+  return Math.floor(
+    Math.random() *
+      (max - min + 1)
+  ) + min;
+}
+
+
+/*
+ * ========================================
+ * WAIT
+ * ========================================
+ */
+
+function wait(ms) {
+
+  return new Promise(
+    (resolve) => {
+      setTimeout(
+        resolve,
+        ms
+      );
+    }
+  );
+}
+
+
+/*
+ * ========================================
+ * SHOULD REPLY
+ * ========================================
+ */
+
+function shouldReply({
+  text,
+  botName,
+  botUsername,
+  reason
+}) {
+
   /*
-   * ======================================
-   * DIRECT MENTION = HIGH PRIORITY
-   * ======================================
+   * Direct mention:
    *
-   * Anyone mentioning SK VIBEZ
-   * should get a response.
+   * Always eligible.
    */
+
   if (
     isDirectMention(
-      message,
+      text,
+      botUsername,
       botName
     )
   ) {
-    console.log(
-      "[HumanBehavior] Direct SK VIBEZ mention detected from:",
-      senderUsername || "unknown"
-    );
 
     return {
       reply: true,
-      reason: "direct_mention"
+      reason:
+        "direct_mention"
     };
   }
 
 
   /*
-   * Normal room chat.
-   *
-   * Participate only occasionally.
+   * Explicit reason from future
+   * callers can force a reply.
    */
+
   if (
-    Math.random() < 0.08
+    reason ===
+    "direct_mention"
   ) {
+
+    return {
+      reply: true,
+      reason
+    };
+  }
+
+
+  /*
+   * Casual room participation.
+   *
+   * Only occasionally.
+   */
+
+  if (
+    Math.random() <
+    CASUAL_REPLY_CHANCE
+  ) {
+
     return {
       reply: true,
       reason:
-        "casual_room_participation"
+        "casual_room"
     };
   }
 
 
   return {
     reply: false,
-    reason: "not_selected"
+    reason:
+      "ignored"
   };
-}
-
-
-/*
- * ========================================
- * REPLY HISTORY
- * ========================================
- */
-
-function rememberReply(reply) {
-  const value =
-    cleanText(reply);
-
-  if (!value) {
-    return;
-  }
-
-  lastReply = value;
-}
-
-
-function isDuplicateReply(reply) {
-  const value =
-    cleanText(reply);
-
-  if (
-    !value ||
-    !lastReply
-  ) {
-    return false;
-  }
-
-  return (
-    value.toLowerCase() ===
-    lastReply.toLowerCase()
-  );
-}
-
-
-function chooseReply(replies) {
-  if (
-    !Array.isArray(replies) ||
-    replies.length === 0
-  ) {
-    return "";
-  }
-
-  const validReplies =
-    replies
-      .map(cleanText)
-      .filter(Boolean);
-
-  if (
-    validReplies.length === 0
-  ) {
-    return "";
-  }
-
-  const alternatives =
-    validReplies.filter(
-      (reply) =>
-        !isDuplicateReply(
-          reply
-        )
-    );
-
-  const pool =
-    alternatives.length > 0
-      ? alternatives
-      : validReplies;
-
-  return pool[
-    randomInt(
-      0,
-      pool.length - 1
-    )
-  ];
-}
-
-
-/*
- * ========================================
- * CASUAL TANGlish MESSAGES
- * ========================================
- */
-
-const CASUAL_MESSAGES = [
-  "Nalla vibe irukku inga 🎶",
-
-  "Indha room la music mood super ah irukku 🎧",
-
-  "Nice vibe 😄",
-
-  "Music + good vibes ✨",
-
-  "Chill pannitu iruken 😌",
-
-  "Indha nerathukku oru nalla song venum 🎶",
-
-  "Ellarum nalla vibe pannunga 😄",
-
-  "Just enjoying the vibe 🎧",
-
-  "Nalla poitu irukku ✨",
-
-  "Music on, mood on 🎶"
-];
-
-
-function getCasualMessage() {
-  return chooseReply(
-    CASUAL_MESSAGES
-  );
-}
-
-
-/*
- * ========================================
- * SAFE TYPING
- * ========================================
- *
- * No unverified Groic typing event
- * is assumed.
- */
-
-async function safeStartTyping(
-  startTyping
-) {
-  if (
-    typeof startTyping !==
-    "function"
-  ) {
-    return false;
-  }
-
-  try {
-    await Promise.resolve(
-      startTyping()
-    );
-
-    return true;
-
-  } catch (error) {
-
-    console.log(
-      "[HumanBehavior] Typing start unavailable:",
-      error?.message ||
-      error
-    );
-
-    return false;
-  }
-}
-
-
-async function safeStopTyping(
-  stopTyping
-) {
-  if (
-    typeof stopTyping !==
-    "function"
-  ) {
-    return false;
-  }
-
-  try {
-    await Promise.resolve(
-      stopTyping()
-    );
-
-    return true;
-
-  } catch (error) {
-
-    console.log(
-      "[HumanBehavior] Typing stop unavailable:",
-      error?.message ||
-      error
-    );
-
-    return false;
-  }
 }
 
 
@@ -696,235 +725,261 @@ async function safeStopTyping(
  * ========================================
  */
 
-async function performReply(
-  options = {}
-) {
-  const {
-    reply,
-    sendReply,
-    startTyping,
-    stopTyping,
-    delayMs,
-    reason
-  } = options;
+async function performReply({
+  generateReply,
+  sendReply,
+  startTyping,
+  stopTyping,
+  message,
+  reason,
+  sender
+}) {
+
+  /*
+   * Never allow overlapping replies.
+   */
+
+  if (
+    replyInProgress
+  ) {
+
+    console.log(
+      "[SKVIBEZ HumanBehavior] Reply already in progress."
+    );
+
+    return {
+      replied: false,
+      reason:
+        "reply_in_progress"
+    };
+  }
+
+
+  /*
+   * Global reply gap.
+   */
+
+  const now =
+    Date.now();
+
+
+  if (
+    lastReplyAt &&
+    now - lastReplyAt <
+    MIN_REPLY_GAP
+  ) {
+
+    console.log(
+      "[SKVIBEZ HumanBehavior] Reply skipped: minimum gap."
+    );
+
+    return {
+      replied: false,
+      reason:
+        "reply_gap"
+    };
+  }
+
+
+  if (
+    typeof generateReply !==
+    "function"
+  ) {
+
+    console.log(
+      "[SKVIBEZ HumanBehavior] generateReply is missing."
+    );
+
+    return {
+      replied: false,
+      reason:
+        "generate_reply_missing"
+    };
+  }
 
 
   if (
     typeof sendReply !==
     "function"
   ) {
-    console.error(
-      "[HumanBehavior] sendReply function is missing."
-    );
 
-    return {
-      sent: false,
-      reason:
-        "sendReply_function_missing"
-    };
-  }
-
-
-  const message =
-    cleanText(reply);
-
-
-  if (!message) {
     console.log(
-      "[HumanBehavior] Empty reply rejected."
+      "[SKVIBEZ HumanBehavior] sendReply is missing."
     );
 
     return {
-      sent: false,
+      replied: false,
       reason:
-        "empty_reply"
+        "send_reply_missing"
     };
   }
 
 
-  /*
-   * Do not send the exact same reply
-   * consecutively.
-   */
-  if (
-    isDuplicateReply(message)
-  ) {
-    console.log(
-      "[HumanBehavior] Duplicate reply blocked:",
-      message
-    );
-
-    return {
-      sent: false,
-      reason:
-        "duplicate_reply"
-    };
-  }
-
-
-  /*
-   * Prevent overlapping replies.
-   */
-  if (replyInProgress) {
-    console.log(
-      "[HumanBehavior] Reply already in progress."
-    );
-
-    return {
-      sent: false,
-      reason:
-        "reply_already_in_progress"
-    };
-  }
-
-
-  replyInProgress = true;
-
-  let typingStarted =
-    false;
+  replyInProgress =
+    true;
 
 
   try {
 
     console.log(
-      "[HumanBehavior] Preparing reply:",
-      message
+      "[SKVIBEZ HumanBehavior] Generating reply...",
+      reason
     );
-
-    console.log(
-      "[HumanBehavior] Reply reason:",
-      reason || "unknown"
-    );
-
-
-    /*
-     * Typing callback is optional.
-     */
-    typingStarted =
-      await safeStartTyping(
-        startTyping
-      );
-
-
-    /*
-     * Natural delay.
-     */
-    const waitTime =
-      Number.isFinite(delayMs)
-        ? Math.max(
-            MIN_REPLY_DELAY,
-            Math.min(
-              MAX_REPLY_DELAY,
-              delayMs
-            )
-          )
-        : randomDelay();
-
-
-    console.log(
-      "[HumanBehavior] Waiting",
-      waitTime,
-      "ms before sending."
-    );
-
-
-    await sleep(
-      waitTime
-    );
-
-
-    /*
-     * ====================================
-     * SEND
-     * ====================================
-     */
-
-    console.log(
-      "[HumanBehavior] Calling sendReply..."
-    );
-
-
-    const sendResult =
-      await Promise.resolve(
-        sendReply(message)
-      );
 
 
     /*
      * IMPORTANT:
      *
-     * socket.sendChat() returns true/false.
-     *
-     * If false, do NOT pretend the
-     * message was sent.
+     * Pass the COMPLETE incoming
+     * message object/string to AI.
      */
-    if (
-      sendResult === false
-    ) {
-      console.error(
-        "[HumanBehavior] sendReply returned FALSE. Message was NOT sent."
+
+    const generated =
+      await generateReply({
+        message,
+        reason,
+        sender
+      });
+
+
+    const reply =
+      cleanText(
+        generated
       );
 
+
+    if (!reply) {
+
+      console.log(
+        "[SKVIBEZ HumanBehavior] AI returned empty reply."
+      );
+
+
       return {
-        sent: false,
+        replied: false,
         reason:
-          "send_reply_returned_false"
+          "empty_reply"
       };
     }
 
 
-    /*
-     * Some send functions may not
-     * return anything.
-     *
-     * Undefined is accepted because
-     * the socket emitter itself may
-     * not return a useful status.
-     */
-    rememberReply(
-      message
+    console.log(
+      "[SKVIBEZ HumanBehavior] AI reply ready:",
+      reply
     );
+
+
+    /*
+     * Human-like response delay.
+     */
+
+    const delay =
+      randomBetween(
+        MIN_REPLY_DELAY,
+        MAX_REPLY_DELAY
+      );
 
 
     console.log(
-      "[HumanBehavior] Reply send completed:",
-      message
+      `[SKVIBEZ HumanBehavior] Waiting ${delay}ms before sending.`
     );
 
 
+    if (
+      typeof startTyping ===
+      "function"
+    ) {
+
+      try {
+
+        startTyping();
+
+      } catch (error) {
+
+        console.log(
+          "[SKVIBEZ HumanBehavior] startTyping ignored:",
+          error?.message ||
+          error
+        );
+      }
+    }
+
+
+    await wait(
+      delay
+    );
+
+
+    /*
+     * Check socket/sender immediately
+     * before sending.
+     */
+
+    console.log(
+      "[SKVIBEZ HumanBehavior] Calling sendReply..."
+    );
+
+
+    const sendResult =
+      await sendReply(
+        reply
+      );
+
+
+    console.log(
+      "[SKVIBEZ HumanBehavior] sendReply result:",
+      sendResult
+    );
+
+
+    lastReplyAt =
+      Date.now();
+
+
+    if (
+      typeof stopTyping ===
+      "function"
+    ) {
+
+      try {
+
+        stopTyping();
+
+      } catch (error) {
+
+        console.log(
+          "[SKVIBEZ HumanBehavior] stopTyping ignored:",
+          error?.message ||
+          error
+        );
+      }
+    }
+
+
     return {
-      sent: true,
-      reason: "reply_sent",
-      delayMs: waitTime,
-      typingStarted
+      replied: true,
+      reason,
+      reply,
+      sendResult
     };
 
   } catch (error) {
 
     console.error(
-      "[HumanBehavior] Reply send failed:",
+      "[SKVIBEZ HumanBehavior] performReply failed:",
       error?.message ||
       error
     );
 
 
     return {
-      sent: false,
+      replied: false,
       reason:
-        "reply_send_error",
+        "reply_error",
       error
     };
 
   } finally {
-
-    if (
-      typingStarted
-    ) {
-      await safeStopTyping(
-        stopTyping
-      );
-    }
-
 
     replyInProgress =
       false;
@@ -934,7 +989,7 @@ async function performReply(
 
 /*
  * ========================================
- * HANDLE MESSAGE
+ * HANDLE INCOMING MESSAGE
  * ========================================
  */
 
@@ -943,47 +998,39 @@ async function handleMessage(
   options = {}
 ) {
 
-  /*
-   * Every room message updates
-   * the activity timestamp.
-   */
-  lastActivityAt =
-    Date.now();
+  const {
+    botName =
+      "SK VIBEZ",
+
+    botUsername =
+      "skvibez",
+
+    generateReply,
+
+    sendReply,
+
+    startTyping,
+
+    stopTyping
+  } = options;
 
 
-  /*
-   * Duplicate protection happens
-   * BEFORE AI generation.
-   */
-  if (
-    isDuplicateIncomingMessage(
+  const text =
+    getMessageText(
       message
-    )
-  ) {
-    return {
-      handled: false,
-      replied: false,
-      reason:
-        "duplicate_incoming_message"
-    };
-  }
-
-
-  const decision =
-    shouldReplyToMessage(
-      message,
-      options
     );
 
 
-  if (
-    !decision.reply
-  ) {
+  if (!text) {
+
+    console.log(
+      "[SKVIBEZ HumanBehavior] Message text not found."
+    );
+
     return {
-      handled: false,
       replied: false,
       reason:
-        decision.reason
+        "no_message_text"
     };
   }
 
@@ -994,310 +1041,420 @@ async function handleMessage(
     );
 
 
-  const text =
-    getMessageText(
-      message
-    );
-
-
-  console.log(
-    "[HumanBehavior] Selected message:",
-    text
-  );
-
-  console.log(
-    "[HumanBehavior] Sender:",
-    sender || "unknown"
-  );
-
-  console.log(
-    "[HumanBehavior] Reason:",
-    decision.reason
-  );
-
-
   /*
-   * ====================================
-   * GENERATE AI REPLY
-   * ====================================
+   * Update room activity.
    */
 
-  let reply = "";
-
-
-  if (
-    typeof options.generateReply ===
-    "function"
-  ) {
-
-    try {
-
-      reply =
-        await Promise.resolve(
-          options.generateReply({
-            message,
-            reason:
-              decision.reason,
-            sender
-          })
-        );
-
-    } catch (error) {
-
-      console.error(
-        "[HumanBehavior] Reply generation failed:",
-        error?.message ||
-        error
-      );
-
-      return {
-        handled: true,
-        replied: false,
-        reason:
-          "reply_generation_failed"
-      };
-    }
-
-  } else if (
-    decision.reason ===
-    "casual_room_participation"
-  ) {
-
-    reply =
-      getCasualMessage();
-  }
-
-
-  reply =
-    cleanText(reply);
-
-
-  console.log(
-    "[HumanBehavior] Generated reply:",
-    reply || "(empty)"
-  );
-
-
-  if (!reply) {
-    console.log(
-      "[HumanBehavior] No reply generated."
-    );
-
-    return {
-      handled: true,
-      replied: false,
-      reason:
-        "no_reply_generated"
-    };
-  }
-
-
-  /*
-   * ====================================
-   * SEND REPLY
-   * ====================================
-   */
-
-  const result =
-    await performReply({
-      reply,
-
-      sendReply:
-        options.sendReply,
-
-      startTyping:
-        options.startTyping,
-
-      stopTyping:
-        options.stopTyping,
-
-      delayMs:
-        randomDelay(),
-
-      reason:
-        decision.reason
-    });
-
-
-  if (
-    result.sent
-  ) {
-
-    console.log(
-      "[HumanBehavior] FINAL: SK VIBEZ reply sent successfully."
-    );
-
-  } else {
-
-    console.log(
-      "[HumanBehavior] FINAL: SK VIBEZ reply was NOT sent. Reason:",
-      result.reason
-    );
-  }
-
-
-  return {
-    handled: true,
-
-    replied:
-      result.sent,
-
-    reason:
-      result.sent
-        ? decision.reason
-        : result.reason,
-
-    result
-  };
-}
-
-
-/*
- * ========================================
- * IDLE BEHAVIOR
- * ========================================
- */
-
-function canSendIdleMessage() {
-  const now =
+  lastActivityAt =
     Date.now();
 
 
-  const idleFor =
-    now - lastActivityAt;
+  /*
+   * Ignore bot messages.
+   */
+
+  if (
+    isBotMessage(
+      message
+    )
+  ) {
+
+    console.log(
+      "[SKVIBEZ HumanBehavior] Ignored bot message:",
+      sender
+    );
 
 
-  const sinceLastIdleMessage =
-    now - lastIdleMessageAt;
+    return {
+      replied: false,
+      reason:
+        "bot_message"
+    };
+  }
 
 
   /*
-   * Room must be quiet.
+   * Ignore own messages.
    */
+
   if (
-    idleFor <
-    MIN_IDLE_INTERVAL
+    isOwnMessage(
+      sender,
+      botUsername,
+      botName
+    )
   ) {
-    return false;
+
+    console.log(
+      "[SKVIBEZ HumanBehavior] Ignored own message."
+    );
+
+
+    return {
+      replied: false,
+      reason:
+        "own_message"
+    };
   }
 
 
   /*
-   * Prevent frequent idle messages.
+   * Duplicate protection.
    */
+
   if (
-    lastIdleMessageAt > 0 &&
-    sinceLastIdleMessage <
-      MIN_IDLE_INTERVAL
+    isDuplicateIncoming(
+      sender,
+      text
+    )
   ) {
-    return false;
-  }
+
+    console.log(
+      "[SKVIBEZ HumanBehavior] Duplicate message ignored:",
+      sender,
+      text
+    );
 
 
-  return (
-    Math.random() <
-    IDLE_MESSAGE_CHANCE
-  );
-}
-
-
-async function runIdleCheck(
-  options = {}
-) {
-  if (
-    replyInProgress
-  ) {
     return {
-      sent: false,
+      replied: false,
       reason:
-        "reply_in_progress"
+        "duplicate_message"
     };
   }
 
 
-  if (
-    !canSendIdleMessage()
-  ) {
-    return {
-      sent: false,
-      reason:
-        "not_idle_enough"
-    };
-  }
+  /*
+   * Detect direct mention.
+   */
 
-
-  const reply =
-    getCasualMessage();
-
-
-  if (!reply) {
-    return {
-      sent: false,
-      reason:
-        "no_idle_message"
-    };
-  }
+  const directMention =
+    isDirectMention(
+      text,
+      botUsername,
+      botName
+    );
 
 
   console.log(
-    "[HumanBehavior] Idle message selected:",
-    reply
+    "[SKVIBEZ HumanBehavior] Incoming:",
+    sender || "unknown",
+    "=>",
+    text
   );
 
 
-  const result =
-    await performReply({
-      reply,
+  console.log(
+    "[SKVIBEZ HumanBehavior] Direct mention:",
+    directMention
+  );
 
-      sendReply:
-        options.sendReply,
 
-      startTyping:
-        options.startTyping,
+  /*
+   * Decide whether to reply.
+   */
 
-      stopTyping:
-        options.stopTyping,
-
-      delayMs:
-        randomDelay(),
-
-      reason:
-        "idle_behavior"
+  const decision =
+    shouldReply({
+      text,
+      botName,
+      botUsername
     });
 
 
   if (
-    result.sent
+    !decision.reply
   ) {
-    lastIdleMessageAt =
-      Date.now();
+
+    console.log(
+      "[SKVIBEZ HumanBehavior] Message ignored naturally."
+    );
+
+
+    return {
+      replied: false,
+      reason:
+        decision.reason
+    };
   }
 
 
-  return result;
+  /*
+   * Direct mention should always
+   * have the correct reason.
+   */
+
+  const replyReason =
+    directMention
+      ? "direct_mention"
+      : decision.reason;
+
+
+  /*
+   * Generate + send reply.
+   */
+
+  return await performReply({
+
+    generateReply,
+
+    sendReply,
+
+    startTyping,
+
+    stopTyping,
+
+    message,
+
+    reason:
+      replyReason,
+
+    sender
+  });
 }
 
 
 /*
  * ========================================
- * IDLE SCHEDULER
+ * CASUAL IDLE MESSAGES
  * ========================================
  */
 
-function scheduleNextIdleCheck(
-  options = {}
+const IDLE_MESSAGES = [
+
+  "Inga music vibe semma ah irukku 🎶",
+
+  "Chill ah music ketutu iruken 😌",
+
+  "Indha nerathukku oru nalla song venum pola 🎧",
+
+  "Room vibe nalla poitu irukku 😄",
+
+  "Music on, mood on 🎶",
+
+  "Ellarum semma vibe pannitu irukinga 😄",
+
+  "Inga vibe vera level ah irukku ✨",
+
+  "Oru nalla melody potta perfect ah irukum 🎧",
+
+  "Just enjoying the room vibe 😌",
+
+  "Music + good vibes 🎶"
+];
+
+
+/*
+ * ========================================
+ * RANDOM IDLE MESSAGE
+ * ========================================
+ */
+
+function randomIdleMessage() {
+
+  return IDLE_MESSAGES[
+    Math.floor(
+      Math.random() *
+      IDLE_MESSAGES.length
+    )
+  ];
+}
+
+
+/*
+ * ========================================
+ * IDLE CHECK
+ * ========================================
+ */
+
+async function runIdleCheck(
+  options
 ) {
+
   if (
     !idleStarted
   ) {
+
     return;
   }
 
 
+  /*
+   * Schedule next check first.
+   */
+
+  scheduleNextIdleCheck();
+
+
+  /*
+   * Recent room activity.
+   */
+
+  const now =
+    Date.now();
+
+
+  const quietFor =
+    now -
+    lastActivityAt;
+
+
+  if (
+    quietFor <
+    IDLE_MIN_QUIET_MS
+  ) {
+
+    return;
+  }
+
+
+  /*
+   * Prevent very frequent idle
+   * messages.
+   */
+
+  if (
+    lastIdleMessageAt &&
+    now -
+      lastIdleMessageAt <
+      IDLE_MIN_QUIET_MS
+  ) {
+
+    return;
+  }
+
+
+  /*
+   * Random chance.
+   */
+
+  if (
+    Math.random() >
+    IDLE_REPLY_CHANCE
+  ) {
+
+    return;
+  }
+
+
+  if (
+    typeof options?.sendReply !==
+    "function"
+  ) {
+
+    return;
+  }
+
+
+  /*
+   * Do not overlap with AI reply.
+   */
+
+  if (
+    replyInProgress
+  ) {
+
+    return;
+  }
+
+
+  const message =
+    randomIdleMessage();
+
+
+  console.log(
+    "[SKVIBEZ HumanBehavior] Idle message selected:",
+    message
+  );
+
+
+  replyInProgress =
+    true;
+
+
+  try {
+
+    const delay =
+      randomBetween(
+        MIN_REPLY_DELAY,
+        MAX_REPLY_DELAY
+      );
+
+
+    await wait(
+      delay
+    );
+
+
+    const result =
+      await options.sendReply(
+        message
+      );
+
+
+    lastReplyAt =
+      Date.now();
+
+
+    lastIdleMessageAt =
+      Date.now();
+
+
+    lastActivityAt =
+      Date.now();
+
+
+    console.log(
+      "[SKVIBEZ HumanBehavior] Idle message sent:",
+      result
+    );
+
+  } catch (error) {
+
+    console.error(
+      "[SKVIBEZ HumanBehavior] Idle message failed:",
+      error?.message ||
+      error
+    );
+
+  } finally {
+
+    replyInProgress =
+      false;
+  }
+}
+
+
+/*
+ * ========================================
+ * SCHEDULE IDLE CHECK
+ * ========================================
+ */
+
+function scheduleNextIdleCheck() {
+
+  if (
+    !idleStarted
+  ) {
+
+    return;
+  }
+
+
+  if (
+    idleTimer
+  ) {
+
+    clearTimeout(
+      idleTimer
+    );
+  }
+
+
   const delay =
-    randomInt(
-      MIN_IDLE_INTERVAL,
-      MAX_IDLE_INTERVAL
+    randomBetween(
+      IDLE_MIN_QUIET_MS,
+      IDLE_MAX_CHECK_MS
     );
 
 
@@ -1305,64 +1462,73 @@ function scheduleNextIdleCheck(
     setTimeout(
       async () => {
 
-        try {
+        idleTimer =
+          null;
 
-          await runIdleCheck(
-            options
-          );
 
-        } catch (error) {
-
-          console.error(
-            "[HumanBehavior] Idle check failed:",
-            error?.message ||
-            error
-          );
-
-        } finally {
-
-          scheduleNextIdleCheck(
-            options
-          );
-        }
+        await runIdleCheck(
+          idleOptions
+        );
 
       },
       delay
     );
 
 
+  /*
+   * Do not keep Node alive
+   * only because of idle timer.
+   */
+
   if (
     typeof idleTimer.unref ===
     "function"
   ) {
+
     idleTimer.unref();
   }
 }
 
 
+/*
+ * ========================================
+ * IDLE OPTIONS
+ * ========================================
+ */
+
+let idleOptions =
+  null;
+
+
+/*
+ * ========================================
+ * START IDLE BEHAVIOR
+ * ========================================
+ */
+
 function startIdleBehavior(
   options = {}
 ) {
+
+  idleOptions =
+    options;
+
+
   if (
     idleStarted
   ) {
-    return;
-  }
 
-
-  if (
-    typeof options.sendReply !==
-    "function"
-  ) {
     console.log(
-      "[HumanBehavior] Idle behavior not started: sendReply is missing."
+      "[SKVIBEZ HumanBehavior] Idle behavior already running."
     );
 
+
     return;
   }
 
 
-  idleStarted = true;
+  idleStarted =
+    true;
 
 
   lastActivityAt =
@@ -1370,72 +1536,68 @@ function startIdleBehavior(
 
 
   console.log(
-    "[HumanBehavior] Idle behavior started."
+    "[SKVIBEZ HumanBehavior] Idle behavior started."
   );
 
 
-  scheduleNextIdleCheck(
-    options
-  );
+  scheduleNextIdleCheck();
 }
 
 
+/*
+ * ========================================
+ * STOP IDLE BEHAVIOR
+ * ========================================
+ */
+
 function stopIdleBehavior() {
-  idleStarted = false;
+
+  idleStarted =
+    false;
 
 
   if (
     idleTimer
   ) {
+
     clearTimeout(
       idleTimer
     );
 
-    idleTimer = null;
+    idleTimer =
+      null;
   }
 
 
+  idleOptions =
+    null;
+
+
   console.log(
-    "[HumanBehavior] Idle behavior stopped."
+    "[SKVIBEZ HumanBehavior] Idle behavior stopped."
   );
 }
 
 
 /*
  * ========================================
- * STATE
+ * RESET STATE
  * ========================================
  */
 
-function getState() {
-  return {
-    replyInProgress,
+function resetBehaviorState() {
 
-    lastReply,
+  replyInProgress =
+    false;
 
-    lastActivityAt,
-
-    lastIdleMessageAt,
-
-    idleStarted,
-
-    recentMessageCount:
-      recentMessages.size
-  };
-}
-
-
-function resetState() {
-  lastReply = "";
+  lastReplyAt =
+    0;
 
   lastActivityAt =
     Date.now();
 
   lastIdleMessageAt =
     0;
-
-  replyInProgress =
-    false;
 
   recentMessages.clear();
 }
@@ -1448,33 +1610,20 @@ function resetState() {
  */
 
 module.exports = {
-  sleep,
-  randomInt,
-  randomDelay,
 
-  getMessageText,
-  getSenderUsername,
-  isBotMessage,
-
-  createMessageFingerprint,
-  isDuplicateIncomingMessage,
-
-  isDirectMention,
-  shouldReplyToMessage,
-
-  chooseReply,
-  getCasualMessage,
-
-  safeStartTyping,
-  safeStopTyping,
-
-  performReply,
   handleMessage,
 
-  runIdleCheck,
   startIdleBehavior,
+
   stopIdleBehavior,
 
-  getState,
-  resetState
+  resetBehaviorState,
+
+  getMessageText,
+
+  getSenderUsername,
+
+  isBotMessage,
+
+  isDirectMention
 };

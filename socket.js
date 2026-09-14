@@ -1,4 +1,4 @@
-"use strict";
+"us strict";
 
 const { io } = require("socket.io-client");
 

@@ -1,4 +1,4 @@
-"us strict";
+"use strict";
 
 const { io } = require("socket.io-client");
 
@@ -801,7 +801,7 @@ function sendWelcomeMessage(
    * DO NOT CHANGE.
    */
   const welcomeMessage =
-    `🎶 Welcome to yesherif world 🎼, ${participantName}`;
+    `🎶 Welcome to skvibez 🎼, ${participantName}`;
 
 
   console.log(

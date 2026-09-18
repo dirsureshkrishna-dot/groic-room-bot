@@ -801,7 +801,7 @@ function sendWelcomeMessage(
    * DO NOT CHANGE.
    */
   const welcomeMessage =
-    `🎶 Welcome to skvibez 🎼, ${participantName}`;
+    `🎶 Welcome to skvibez (since 2023) 🎼, ${participantName}`;💐
 
 
   console.log(

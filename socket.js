@@ -102,12 +102,15 @@ function connectSocket(roomUid) {
     );
   }
 
+  const cleanedRoomUid =
+    String(roomUid).trim();
+
   /*
    * Reset participant tracking
    * only when room changes.
    */
   if (
-    currentRoomUid !== roomUid
+    currentRoomUid !== cleanedRoomUid
   ) {
     activeParticipants =
       new Set();
@@ -116,7 +119,7 @@ function connectSocket(roomUid) {
   }
 
   currentRoomUid =
-    roomUid;
+    cleanedRoomUid;
 
 
   /*
@@ -266,6 +269,55 @@ function createSocket() {
         "[SKVIBEZ] Reconnect attempt:",
         attempt
       );
+
+      /*
+       * Use the latest token for
+       * reconnect attempts.
+       */
+      try {
+        const latestToken =
+          getToken();
+
+        if (
+          latestToken &&
+          socket
+        ) {
+          socket.auth = {
+            Authorization:
+              latestToken
+          };
+
+          if (
+            socket.io &&
+            socket.io.opts
+          ) {
+            socket.io.opts.auth = {
+              Authorization:
+                latestToken
+            };
+
+            socket.io.opts.extraHeaders = {
+              ...(socket.io.opts.extraHeaders || {}),
+              Authorization:
+                latestToken,
+              Origin:
+                "https://groic.in",
+              Referer:
+                "https://groic.in/",
+              "x-app-version":
+                "web",
+              "x-device-type":
+                "web"
+            };
+          }
+        }
+
+      } catch (error) {
+        console.error(
+          "[SKVIBEZ] Reconnect token update failed:",
+          error?.message || error
+        );
+      }
     }
   );
 
@@ -277,6 +329,9 @@ function createSocket() {
         "[SKVIBEZ] Reconnected after attempts:",
         attempt
       );
+
+      recoveryInProgress =
+        false;
     }
   );
 
@@ -299,6 +354,8 @@ function createSocket() {
       console.error(
         "[SKVIBEZ] Reconnect failed."
       );
+
+      scheduleSameSocketRecovery();
     }
   );
 
@@ -332,6 +389,12 @@ function createSocket() {
         socket.active
       );
 
+      console.log(
+        "[SKVIBEZ] Transport:",
+        socket.io?.engine?.transport?.name ||
+        "unknown"
+      );
+
 
       if (!currentRoomUid) {
         console.log(
@@ -345,33 +408,41 @@ function createSocket() {
       /*
        * Join SAME room.
        */
-      socket.emit(
-        "joinRoom",
-        {
-          roomUid:
-            currentRoomUid,
+      try {
+        socket.emit(
+          "joinRoom",
+          {
+            roomUid:
+              currentRoomUid,
 
-          name:
-            BOT_NAME,
+            name:
+              BOT_NAME,
 
-          imageUrl:
-            process.env.BOT_IMAGE_URL ||
-            "",
+            imageUrl:
+              process.env.BOT_IMAGE_URL ||
+              "",
 
-          isBot:
-            false
-        }
-      );
+            isBot:
+              false
+          }
+        );
 
+        console.log(
+          "[SKVIBEZ] Join room request sent."
+        );
 
-      console.log(
-        "[SKVIBEZ] Join room request sent."
-      );
+        console.log(
+          "[SKVIBEZ] Room UID:",
+          currentRoomUid
+        );
 
-      console.log(
-        "[SKVIBEZ] Room UID:",
-        currentRoomUid
-      );
+      } catch (error) {
+        console.error(
+          "[SKVIBEZ] Join room error:",
+          error?.message || error
+        );
+      }
+
 
       /*
        * IMPORTANT:
@@ -403,17 +474,17 @@ function createSocket() {
 
       console.log(
         "[SKVIBEZ] Socket active:",
-        socket.active
+        socket?.active
       );
 
       console.log(
         "[SKVIBEZ] Socket connected:",
-        socket.connected
+        socket?.connected
       );
 
       console.log(
         "[SKVIBEZ] Socket ID:",
-        socket.id
+        socket?.id
       );
 
 
@@ -457,9 +528,23 @@ function createSocket() {
       }
 
 
+      /*
+       * Unexpected disconnect.
+       */
       console.log(
         "[SKVIBEZ] Unexpected disconnect."
       );
+
+      /*
+       * If Socket.IO is not actively
+       * reconnecting, recover the same socket.
+       */
+      if (
+        socket &&
+        !socket.active
+      ) {
+        scheduleSameSocketRecovery();
+      }
     }
   );
 
@@ -494,12 +579,19 @@ function createSocket() {
 
 
       if (error?.data) {
-        console.error(
-          "Error data:",
-          JSON.stringify(
+        try {
+          console.error(
+            "Error data:",
+            JSON.stringify(
+              error.data
+            )
+          );
+        } catch (_) {
+          console.error(
+            "Error data:",
             error.data
-          )
-        );
+          );
+        }
       }
 
 
@@ -563,6 +655,18 @@ function createSocket() {
         new Set();
 
 
+      /*
+       * Protected bot accounts.
+       */
+      const protectedBots =
+        new Set([
+          "skvibez",
+          "groic_explore",
+          "groicai",
+          "groic_music"
+        ]);
+
+
       for (
         const user of users
       ) {
@@ -588,25 +692,14 @@ function createSocket() {
           username.toLowerCase();
 
 
-        /*
-         * Protected bot accounts.
-         *
-         * Never send Welcome to bots.
-         */
-        const protectedBots =
-          new Set([
-            "skvibez",
-            "groic_explore",
-            "groicai",
-            "groic_music"
-          ]);
-
-
         currentParticipants.add(
           normalizedUsername
         );
 
 
+        /*
+         * Never welcome protected bots.
+         */
         if (
           protectedBots.has(
             normalizedUsername
@@ -651,18 +744,16 @@ function createSocket() {
    *
    * We intentionally DO NOTHING here.
    *
-   * This means:
-   *
-   * skvibez hi       -> NO reply
-   * skvibez saptiya  -> NO reply
-   * normal chat      -> NO reply
-   * !play            -> NO reply
+   * skvibez hi      -> NO reply
+   * skvibez saptiya -> NO reply
+   * normal chat     -> NO reply
+   * !play           -> NO reply
    * ==========================================================
    */
 
   socket.on(
     "chat",
-    (data) => {
+    () => {
       console.log(
         "[SKVIBEZ] Room chat observed."
       );
@@ -694,10 +785,16 @@ function createSocket() {
         event !== "chat" &&
         args.length > 0
       ) {
-        console.log(
-          "[SKVIBEZ] Socket Data:",
-          JSON.stringify(args)
-        );
+        try {
+          console.log(
+            "[SKVIBEZ] Socket Data:",
+            JSON.stringify(args)
+          );
+        } catch (_) {
+          console.log(
+            "[SKVIBEZ] Socket Data: [unserializable]"
+          );
+        }
       }
     }
   );
@@ -710,6 +807,8 @@ function createSocket() {
    */
 
   attachEngineDiagnostics();
+
+  return socket;
 }
 
 
@@ -796,12 +895,16 @@ function sendWelcomeMessage(
 
 
   /*
-   * EXISTING WELCOME MESSAGE.
+   * WELCOME MESSAGE
    *
-   * DO NOT CHANGE.
+   * IMPORTANT:
+   * The flower emoji is INSIDE the
+   * template string.
+   *
+   * This fixes the previous syntax error.
    */
   const welcomeMessage =
-    `🎶 Welcome to skvibez (since 2023) 🎼, ${participantName}`;💐
+    `🎶 Welcome to skvibez (since 2023) 🎼, ${participantName} 💐`;
 
 
   console.log(
@@ -825,78 +928,94 @@ function sendWelcomeMessage(
  * ============================================================
  */
 
-onTokenRefresh(
-  async (newToken) => {
-    console.log(
-      "[SKVIBEZ] New token received."
-    );
-
-
-    if (!newToken) {
+if (
+  typeof onTokenRefresh ===
+  "function"
+) {
+  onTokenRefresh(
+    async (newToken) => {
       console.log(
-        "[SKVIBEZ] Empty token received."
+        "[SKVIBEZ] New token received."
       );
 
-      return;
-    }
+
+      if (!newToken) {
+        console.log(
+          "[SKVIBEZ] Empty token received."
+        );
+
+        return;
+      }
 
 
-    if (!socket) {
-      console.log(
-        "[SKVIBEZ] Socket does not exist."
-      );
+      if (!socket) {
+        console.log(
+          "[SKVIBEZ] Socket does not exist."
+        );
 
-      return;
-    }
-
-
-    /*
-     * Update Socket.IO authentication.
-     */
-    socket.auth = {
-      Authorization:
-        newToken
-    };
+        return;
+      }
 
 
-    if (
-      socket.io &&
-      socket.io.opts
-    ) {
+      /*
+       * Update Socket.IO authentication.
+       */
+      socket.auth = {
+        Authorization:
+          newToken
+      };
+
 
       if (
-        socket.io.opts.extraHeaders
-      ) {
+        socket.io &&
         socket.io.opts
-          .extraHeaders
-          .Authorization =
-          newToken;
-      }
-
-
-      if (
-        socket.io.opts.auth
       ) {
-        socket.io.opts.auth
-          .Authorization =
-          newToken;
+
+        socket.io.opts.auth = {
+          Authorization:
+            newToken
+        };
+
+
+        socket.io.opts.extraHeaders = {
+          ...(socket.io.opts.extraHeaders || {}),
+
+          Authorization:
+            newToken,
+
+          Origin:
+            "https://groic.in",
+
+          Referer:
+            "https://groic.in/",
+
+          "x-app-version":
+            "web",
+
+          "x-device-type":
+            "web"
+        };
       }
+
+
+      console.log(
+        "[SKVIBEZ] Socket authentication updated."
+      );
+
+
+      /*
+       * IMPORTANT:
+       *
+       * No disconnect().
+       * No connect().
+       */
     }
-
-
-    console.log(
-      "[SKVIBEZ] Socket authentication updated."
-    );
-
-
-    /*
-     * IMPORTANT:
-     *
-     * No disconnect().
-     * No connect().
-     */
-  }
-);
+  );
+} else {
+  console.log(
+    "[SKVIBEZ] onTokenRefresh is not available. Continuing without token listener."
+  );
+}
 
 
 /*
@@ -921,6 +1040,9 @@ function recoverSameSocket() {
     console.log(
       "[SKVIBEZ] Socket already connected."
     );
+
+    recoveryInProgress =
+      false;
 
     return;
   }
@@ -947,6 +1069,44 @@ function recoverSameSocket() {
 
 
   try {
+    /*
+     * Use latest token before recovery.
+     */
+    const latestToken =
+      getToken();
+
+    if (latestToken) {
+      socket.auth = {
+        Authorization:
+          latestToken
+      };
+
+      if (
+        socket.io &&
+        socket.io.opts
+      ) {
+        socket.io.opts.auth = {
+          Authorization:
+            latestToken
+        };
+
+        socket.io.opts.extraHeaders = {
+          ...(socket.io.opts.extraHeaders || {}),
+          Authorization:
+            latestToken,
+          Origin:
+            "https://groic.in",
+          Referer:
+            "https://groic.in/",
+          "x-app-version":
+            "web",
+          "x-device-type":
+            "web"
+        };
+      }
+    }
+
+
     socket.connect();
 
     console.log(
@@ -975,7 +1135,9 @@ function recoverSameSocket() {
  * ============================================================
  */
 
-function scheduleSameSocketRecovery() {
+function scheduleSameSocketRecovery(
+  delay = 5000
+) {
   if (
     recoveryTimer
   ) {
@@ -995,6 +1157,9 @@ function scheduleSameSocketRecovery() {
           console.log(
             "[SKVIBEZ] Socket does not exist."
           );
+
+          recoveryInProgress =
+            false;
 
           return;
         }
@@ -1017,7 +1182,7 @@ function scheduleSameSocketRecovery() {
         recoverSameSocket();
 
       },
-      5000
+      delay
     );
 }
 
@@ -1108,18 +1273,26 @@ function startKeepAlive() {
           currentRoomUid
         ) {
 
-          console.log(
-            "[SKVIBEZ] Sending Groic room sync..."
-          );
+          try {
+            socket.emit(
+              "requestSync",
+              {
+                roomUid:
+                  currentRoomUid
+              }
+            );
 
+            console.log(
+              "[SKVIBEZ] Sending Groic room sync..."
+            );
 
-          socket.emit(
-            "requestSync",
-            {
-              roomUid:
-                currentRoomUid
-            }
-          );
+          } catch (error) {
+            console.error(
+              "[SKVIBEZ] Keep-alive error:",
+              error?.message ||
+              error
+            );
+          }
         }
 
       },
@@ -1202,7 +1375,9 @@ function startConnectionWatchdog() {
         );
 
 
-        scheduleSameSocketRecovery();
+        scheduleSameSocketRecovery(
+          1000
+        );
 
       },
       15000
